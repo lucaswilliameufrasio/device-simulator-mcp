@@ -13,9 +13,9 @@ UIKit, React Native, or any other app that runs on the target device.
 
 ## Installation
 
-Release binaries are published for macOS, Linux, and Windows. Until this
-private repository is public, download releases with an authenticated GitHub
-CLI session:
+Release binaries will be published for macOS, Linux, and Windows. Until this
+private repository is public and has its first release, build locally. For
+private releases, use an authenticated GitHub CLI session:
 
 ```bash
 gh release download --repo lucaswilliameufrasio/device-simulator-mcp \
@@ -26,6 +26,14 @@ Build locally:
 
 ```bash
 cargo build --release
+```
+
+After the first release is published:
+
+```bash
+gh release download v0.1.0 \
+  --repo lucaswilliameufrasio/device-simulator-mcp \
+  --pattern 'device-simulator-mcp-*'
 ```
 
 ## MCP Configuration

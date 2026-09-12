@@ -174,7 +174,7 @@ async fn start_device() -> anyhow::Result<String> {
             Ok(preview_url)
         }
         Platform::Android => {
-            run_adb(&["start-server"]).await?;
+            run_adb_command(&["start-server"]).await?;
             timeout(PREVIEW_TIMEOUT, run_adb(&["wait-for-device"]))
                 .await
                 .map_err(|_| anyhow::anyhow!("Android Emulator did not become ready"))??;
@@ -271,11 +271,9 @@ async fn android_pixels(x: f64, y: f64) -> anyhow::Result<(String, String)> {
         .lines()
         .find_map(|line| line.rsplit_once(' ').map(|(_, value)| value.trim()))
         .ok_or_else(|| anyhow::anyhow!("could not determine Android display size"))?;
-    let (width, height) = dimensions
-        .split_once('x')
-        .ok_or_else(|| anyhow::anyhow!("invalid Android display size: {dimensions}"))?;
-    let pixel_x = (x * width.parse::<f64>()?).round().to_string();
-    let pixel_y = (y * height.parse::<f64>()?).round().to_string();
+    let (width, height) = parse_display_size(dimensions)?;
+    let pixel_x = (x * width).round().to_string();
+    let pixel_y = (y * height).round().to_string();
     Ok((pixel_x, pixel_y))
 }
 
@@ -310,6 +308,21 @@ async fn run_adb(arguments: &[&str]) -> anyhow::Result<String> {
     }
     command_arguments.extend(arguments.iter().map(|argument| (*argument).to_owned()));
     run_command("adb", &command_arguments).await
+}
+
+async fn run_adb_command(arguments: &[&str]) -> anyhow::Result<String> {
+    let command_arguments = arguments
+        .iter()
+        .map(|argument| (*argument).to_owned())
+        .collect::<Vec<_>>();
+    run_command("adb", &command_arguments).await
+}
+
+fn parse_display_size(dimensions: &str) -> anyhow::Result<(f64, f64)> {
+    let (width, height) = dimensions
+        .split_once('x')
+        .ok_or_else(|| anyhow::anyhow!("invalid Android display size: {dimensions}"))?;
+    Ok((width.parse::<f64>()?, height.parse::<f64>()?))
 }
 
 async fn run_adb_bytes(arguments: &[&str]) -> anyhow::Result<Vec<u8>> {
@@ -403,7 +416,9 @@ async fn main() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{gesture_payload, validate_coordinates, validate_screenshot_name};
+    use super::{
+        gesture_payload, parse_display_size, validate_coordinates, validate_screenshot_name,
+    };
 
     #[test]
     fn accepts_normalized_coordinates() {
@@ -428,5 +443,10 @@ mod tests {
             gesture_payload("begin", 0.5, 0.25),
             r#"{"type":"begin","x":0.5,"y":0.25}"#
         );
+    }
+
+    #[test]
+    fn parses_android_display_size() {
+        assert_eq!(parse_display_size("1080x2400").unwrap(), (1080.0, 2400.0));
     }
 }
