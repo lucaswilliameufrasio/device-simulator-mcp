@@ -22,6 +22,18 @@ gh release download --repo lucaswilliameufrasio/device-simulator-mcp \
   --pattern 'device-simulator-mcp-*'
 ```
 
+Install the current private release directly:
+
+```bash
+./scripts/install-private.sh
+```
+
+Install a specific version:
+
+```bash
+./scripts/install-private.sh --tag v0.1.0
+```
+
 Build locally:
 
 ```bash
