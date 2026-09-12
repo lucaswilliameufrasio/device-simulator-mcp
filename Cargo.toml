@@ -1,0 +1,22 @@
+[package]
+name = "device-simulator-mcp"
+version = "0.1.0"
+edition = "2024"
+repository = "https://github.com/lucaswilliameufrasio/device-simulator-mcp"
+authors = ["Lucas Eufrasio"]
+license = "MIT"
+
+[dependencies]
+anyhow = "1.0.104"
+base64 = "0.23.1"
+rmcp = { version = "3.3.0", features = ["server", "macros", "transport-io", "schemars"] }
+schemars = "1.2.2"
+serde = { version = "1.0.229", features = ["derive"] }
+tokio = { version = "1.53.1", features = ["fs", "macros", "net", "process", "rt-multi-thread", "time"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"

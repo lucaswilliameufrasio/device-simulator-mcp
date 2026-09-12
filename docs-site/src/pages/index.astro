@@ -1,0 +1,129 @@
+---
+import "../styles/global.css";
+
+const title = "Device Simulator MCP | Inspect real device surfaces";
+const description =
+  "A local MCP server for controlling iOS Simulators and Android Emulators from any compatible AI host.";
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <meta name="description" content={description} />
+    <meta name="theme-color" content="#111318" />
+    <title>{title}</title>
+  </head>
+  <body class="bg-ink text-paper antialiased">
+    <main class="mx-auto max-w-7xl overflow-hidden px-5 sm:px-8">
+      <nav class="flex h-20 items-center justify-between border-b border-line" aria-label="Main navigation">
+        <a class="flex items-center gap-3 font-mono text-sm font-bold tracking-tight" href="/">
+          <span class="grid h-8 w-8 place-items-center rounded-lg bg-violet text-ink">DS</span>
+          <span>device-simulator-mcp</span>
+        </a>
+        <div class="flex items-center gap-6 text-sm text-dim">
+          <a class="hidden transition-colors hover:text-paper sm:block" href="#tools">Tools</a>
+          <a class="hidden transition-colors hover:text-paper sm:block" href="#install">Install</a>
+          <a class="rounded-full border border-line px-4 py-2 text-paper transition-colors hover:border-violet" href="https://github.com/lucaswilliameufrasio/device-simulator-mcp">GitHub</a>
+        </div>
+      </nav>
+
+      <section class="relative grid gap-16 py-20 lg:grid-cols-[0.9fr_1.1fr] lg:items-center lg:py-32">
+        <div class="relative z-10">
+          <p class="mb-7 font-mono text-xs font-bold tracking-[0.18em] text-violet">LOCAL DEVICE LAB / MCP</p>
+          <h1 class="max-w-3xl text-5xl font-semibold leading-[0.95] tracking-[-0.06em] text-paper sm:text-7xl lg:text-[84px]">Your agent can see the screen now.</h1>
+          <p class="mt-8 max-w-xl text-lg leading-8 text-dim">Control a real iOS Simulator or Android Emulator through a small local MCP server. Capture the surface, act on it, and return visual proof.</p>
+          <div class="mt-9 flex flex-wrap gap-3">
+            <a class="rounded-full bg-violet px-5 py-3 text-sm font-bold text-ink transition-transform hover:-translate-y-0.5" href="#install">Install the binary <span aria-hidden="true">↗</span></a>
+            <a class="rounded-full border border-line px-5 py-3 text-sm font-bold text-paper transition-colors hover:border-paper" href="#tools">See the interface</a>
+          </div>
+          <div class="mt-14 flex gap-7 font-mono text-[11px] text-muted">
+            <span><b class="text-ios">iOS</b> / serve-sim</span>
+            <span><b class="text-android">Android</b> / adb</span>
+          </div>
+        </div>
+
+        <div class="device-stage relative min-h-[410px]" aria-label="Device inspection preview">
+          <div class="absolute left-2 top-12 h-72 w-44 rotate-[-7deg] rounded-[28px] border-4 border-[#363a46] bg-[#20232c] p-2 shadow-2xl sm:left-16 sm:w-52">
+            <div class="flex h-full flex-col overflow-hidden rounded-[19px] bg-[#111b27]">
+              <div class="h-5 bg-[#202d3e]"></div>
+              <div class="flex flex-1 flex-col justify-end gap-2 p-4">
+                <span class="h-2 w-20 rounded-full bg-ios/70"></span>
+                <span class="h-2 w-28 rounded-full bg-[#42526a]"></span>
+                <span class="mt-4 h-20 rounded-xl border border-ios/30 bg-ios/10"></span>
+              </div>
+              <small class="p-3 font-mono text-[9px] text-ios">ios / booted</small>
+            </div>
+          </div>
+          <div class="absolute right-2 top-24 h-72 w-44 rotate-[8deg] rounded-[28px] border-4 border-[#343a39] bg-[#202722] p-2 shadow-2xl sm:right-16 sm:w-52">
+            <div class="flex h-full flex-col overflow-hidden rounded-[19px] bg-[#112019]">
+              <div class="h-5 bg-[#1d3427]"></div>
+              <div class="flex flex-1 flex-col gap-2 p-4">
+                <span class="h-16 rounded-xl border border-android/30 bg-android/10"></span>
+                <span class="mt-auto h-2 w-24 rounded-full bg-android/70"></span>
+                <span class="h-2 w-16 rounded-full bg-[#496b50]"></span>
+              </div>
+              <small class="p-3 font-mono text-[9px] text-android">android / ready</small>
+            </div>
+          </div>
+          <div class="absolute bottom-2 left-1/2 -translate-x-1/2 rounded border border-line bg-panel px-4 py-3 font-mono text-xs text-dim shadow-xl">
+            <span class="text-violet">$</span> device_capture <span class="text-muted">--name checkout</span>
+          </div>
+          <div class="scan-line"></div>
+        </div>
+      </section>
+
+      <section class="grid border-y border-line py-8 sm:grid-cols-3" aria-label="Project facts">
+        <div class="border-line pb-5 sm:border-r sm:pb-0 sm:pl-6"><p class="font-mono text-xs text-muted">TRANSPORT</p><p class="mt-2 font-semibold">stdio by default</p></div>
+        <div class="border-line py-5 sm:border-r sm:px-6 sm:py-0"><p class="font-mono text-xs text-muted">RUNTIME</p><p class="mt-2 font-semibold">Local and inspectable</p></div>
+        <div class="pt-5 sm:px-6 sm:pt-0"><p class="font-mono text-xs text-muted">PLATFORMS</p><p class="mt-2 font-semibold">iOS + Android</p></div>
+      </section>
+
+      <section id="tools" class="grid gap-12 py-24 lg:grid-cols-[0.65fr_1.35fr] lg:py-32">
+        <div>
+          <p class="font-mono text-xs font-bold tracking-[0.18em] text-violet">THE INTERFACE</p>
+          <h2 class="mt-5 max-w-md text-4xl font-semibold leading-tight tracking-[-0.05em] sm:text-5xl">A small surface for a large feedback loop.</h2>
+          <p class="mt-6 max-w-md leading-7 text-dim">The MCP server does not build or install your app. It starts with the device you already booted and makes the visible state available to your agent.</p>
+        </div>
+        <div class="grid divide-y divide-line border-y border-line">
+          <div class="grid gap-4 py-5 sm:grid-cols-[130px_1fr] sm:items-center"><code class="font-mono text-sm text-violet">device_capture</code><p class="text-dim">Return a PNG of the current display as image content.</p></div>
+          <div class="grid gap-4 py-5 sm:grid-cols-[130px_1fr] sm:items-center"><code class="font-mono text-sm text-ios">device_tap</code><p class="text-dim">Tap with normalized coordinates from 0 to 1.</p></div>
+          <div class="grid gap-4 py-5 sm:grid-cols-[130px_1fr] sm:items-center"><code class="font-mono text-sm text-android">device_swipe</code><p class="text-dim">Move through a screen with one platform-neutral gesture.</p></div>
+          <div class="grid gap-4 py-5 sm:grid-cols-[130px_1fr] sm:items-center"><code class="font-mono text-sm text-paper">device_type</code><p class="text-dim">Type into the focused control on either platform.</p></div>
+        </div>
+      </section>
+
+      <section id="install" class="grid gap-10 border border-line bg-panel p-6 sm:p-10 lg:grid-cols-[0.8fr_1.2fr] lg:items-center">
+        <div>
+          <p class="font-mono text-xs font-bold tracking-[0.18em] text-violet">QUICK START</p>
+          <h2 class="mt-5 text-4xl font-semibold leading-tight tracking-[-0.05em]">Install once. Inspect whenever.</h2>
+          <p class="mt-5 leading-7 text-dim">Release binaries are built for your host platform. The device SDK stays on your machine, and the MCP server stays local.</p>
+        </div>
+        <pre class="overflow-x-auto border border-line bg-ink p-5 font-mono text-sm leading-8 text-dim"><code><span class="text-muted"># install a release binary</span>
+cargo install --git https://github.com/lucaswilliameufrasio/device-simulator-mcp
+
+<span class="text-muted"># point your MCP host at it</span>
+ &#123;
+  <span class="text-violet">"command"</span>: <span class="text-paper">"device-simulator-mcp"</span>,
+  <span class="text-violet">"env"</span>: &#123; <span class="text-violet">"DEVICE_PLATFORM"</span>: <span class="text-paper">"ios"</span> &#125;
+ &#125;</code></pre>
+      </section>
+
+      <section class="flex flex-col gap-7 py-24 sm:flex-row sm:items-end sm:justify-between lg:py-32">
+        <div><p class="font-mono text-xs font-bold tracking-[0.18em] text-violet">NO REMOTE SERVICE</p><h2 class="mt-5 max-w-2xl text-5xl font-semibold leading-[0.98] tracking-[-0.06em]">The device is yours. The screenshot stays yours.</h2></div>
+        <a class="shrink-0 font-mono text-sm text-violet underline decoration-violet/40 underline-offset-8 hover:decoration-violet" href="https://github.com/lucaswilliameufrasio/device-simulator-mcp">Read the source ↗</a>
+      </section>
+
+      <footer class="flex flex-col gap-3 border-t border-line py-7 font-mono text-[11px] text-muted sm:flex-row sm:justify-between"><span>device-simulator-mcp / 2026</span><span>Built for local visual feedback</span></footer>
+    </main>
+  </body>
+</html>
+
+<style>
+  :global(:root) { --color-ink: #111318; --color-paper: #f2f0ec; --color-panel: #191b22; --color-line: #2b2f3a; --color-dim: #a1a6b3; --color-muted: #646b79; --color-violet: #bba4ff; --color-ios: #78b8ff; --color-android: #9be28f; }
+  :global(body) { margin: 0; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+  .device-stage { background-image: linear-gradient(var(--color-line) 1px, transparent 1px), linear-gradient(90deg, var(--color-line) 1px, transparent 1px); background-size: 32px 32px; background-position: center; }
+  .scan-line { position: absolute; top: 12%; left: 0; width: 100%; height: 1px; background: linear-gradient(90deg, transparent, var(--color-violet), transparent); opacity: .65; animation: scan 5s ease-in-out infinite; }
+  @keyframes scan { 0%, 100% { transform: translateY(0); opacity: .15; } 50% { transform: translateY(260px); opacity: .8; } }
+  @media (prefers-reduced-motion: reduce) { .scan-line { animation: none; } }
+</style>

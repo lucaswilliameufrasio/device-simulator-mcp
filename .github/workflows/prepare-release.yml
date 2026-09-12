@@ -1,0 +1,54 @@
+name: Prepare Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (for example 0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  prepare:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: git-cliff@2.13.1
+      - name: Validate version
+        id: version
+        env:
+          RAW_VERSION: ${{ inputs.version }}
+        run: |
+          VERSION="${RAW_VERSION#v}"
+          echo "value=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'
+      - name: Prepare release files
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          git cliff --bump --tag "v$VERSION" -o CHANGELOG.md
+          sed -i "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
+          cargo generate-lockfile
+      - name: Open release PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md Cargo.toml Cargo.lock
+          git commit -m "chore(release): prepare for v$VERSION"
+          BRANCH="release/v$VERSION-rc.${{ github.run_attempt }}"
+          git push origin HEAD:"$BRANCH"
+          gh pr create --base main --head "$BRANCH" \
+            --title "Release v$VERSION" \
+            --body "Automated release preparation for v$VERSION."
