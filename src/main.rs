@@ -58,7 +58,11 @@ struct DeviceSimulatorMcp;
 impl DeviceSimulatorMcp {
     #[tool(description = "Start inspection for the configured device")]
     async fn device_start(&self) -> CallToolResult {
-        match start_device().await {
+        let platform = match configured_platform() {
+            Ok(platform) => platform,
+            Err(error) => return failure(error),
+        };
+        match start_device(platform).await {
             Ok(message) => success(message),
             Err(error) => failure(error),
         }
@@ -66,7 +70,11 @@ impl DeviceSimulatorMcp {
 
     #[tool(description = "Stop the active iOS inspection stream")]
     async fn device_stop(&self) -> CallToolResult {
-        match configured_platform() {
+        let platform = match configured_platform() {
+            Ok(platform) => platform,
+            Err(error) => return failure(error),
+        };
+        match platform {
             Platform::Ios => match run_serve_sim(&["--kill"]).await {
                 Ok(message) => success(message),
                 Err(error) => failure(error),
@@ -80,7 +88,11 @@ impl DeviceSimulatorMcp {
 
     #[tool(description = "Show the configured device status")]
     async fn device_status(&self) -> CallToolResult {
-        match status_device().await {
+        let platform = match configured_platform() {
+            Ok(platform) => platform,
+            Err(error) => return failure(error),
+        };
+        match status_device(platform).await {
             Ok(message) => success(message),
             Err(error) => failure(error),
         }
@@ -96,7 +108,11 @@ impl DeviceSimulatorMcp {
             return failure(error);
         }
 
-        match capture_device(screenshot_name).await {
+        let platform = match configured_platform() {
+            Ok(platform) => platform,
+            Err(error) => return failure(error),
+        };
+        match capture_device(platform, screenshot_name).await {
             Ok((image_bytes, description)) => CallToolResult::success(vec![
                 ContentBlock::text(description),
                 ContentBlock::image(BASE64_STANDARD.encode(image_bytes), "image/png"),
@@ -114,7 +130,11 @@ impl DeviceSimulatorMcp {
             return failure(error);
         }
 
-        match tap_device(parameters.x, parameters.y).await {
+        let platform = match configured_platform() {
+            Ok(platform) => platform,
+            Err(error) => return failure(error),
+        };
+        match tap_device(platform, parameters.x, parameters.y).await {
             Ok(message) => success(message),
             Err(error) => failure(error),
         }
@@ -131,7 +151,11 @@ impl DeviceSimulatorMcp {
             return failure(error);
         }
 
-        match swipe_device(parameters).await {
+        let platform = match configured_platform() {
+            Ok(platform) => platform,
+            Err(error) => return failure(error),
+        };
+        match swipe_device(platform, parameters).await {
             Ok(message) => success(message),
             Err(error) => failure(error),
         }
@@ -146,26 +170,34 @@ impl DeviceSimulatorMcp {
             return failure(anyhow::anyhow!("text must not be empty"));
         }
 
-        match type_on_device(&parameters.text).await {
+        let platform = match configured_platform() {
+            Ok(platform) => platform,
+            Err(error) => return failure(error),
+        };
+        match type_on_device(platform, &parameters.text).await {
             Ok(message) => success(message),
             Err(error) => failure(error),
         }
     }
 }
 
-fn configured_platform() -> Platform {
-    match std::env::var("DEVICE_PLATFORM")
-        .unwrap_or_else(|_| "ios".to_owned())
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "android" => Platform::Android,
-        _ => Platform::Ios,
+fn configured_platform() -> anyhow::Result<Platform> {
+    let platform = std::env::var("DEVICE_PLATFORM").unwrap_or_else(|_| "ios".to_owned());
+    parse_platform(&platform)
+}
+
+fn parse_platform(platform: &str) -> anyhow::Result<Platform> {
+    match platform.to_ascii_lowercase().as_str() {
+        "ios" => Ok(Platform::Ios),
+        "android" => Ok(Platform::Android),
+        platform => Err(anyhow::anyhow!(
+            "unsupported DEVICE_PLATFORM '{platform}'; use ios or android"
+        )),
     }
 }
 
-async fn start_device() -> anyhow::Result<String> {
-    match configured_platform() {
+async fn start_device(platform: Platform) -> anyhow::Result<String> {
+    match platform {
         Platform::Ios => {
             run_serve_sim(&["--detach", "--quiet", "--fit"]).await?;
             let preview_url =
@@ -183,15 +215,15 @@ async fn start_device() -> anyhow::Result<String> {
     }
 }
 
-async fn status_device() -> anyhow::Result<String> {
-    match configured_platform() {
+async fn status_device(platform: Platform) -> anyhow::Result<String> {
+    match platform {
         Platform::Ios => run_serve_sim(&["--list"]).await,
         Platform::Android => run_adb(&["devices"]).await,
     }
 }
 
-async fn capture_device(name: &str) -> anyhow::Result<(Vec<u8>, String)> {
-    match configured_platform() {
+async fn capture_device(platform: Platform, name: &str) -> anyhow::Result<(Vec<u8>, String)> {
+    match platform {
         Platform::Ios => {
             let path = temporary_screenshot_path(name);
             run_command(
@@ -199,7 +231,7 @@ async fn capture_device(name: &str) -> anyhow::Result<(Vec<u8>, String)> {
                 &[
                     "simctl".to_owned(),
                     "io".to_owned(),
-                    "booted".to_owned(),
+                    ios_device_target(),
                     "screenshot".to_owned(),
                     path.display().to_string(),
                 ],
@@ -216,8 +248,8 @@ async fn capture_device(name: &str) -> anyhow::Result<(Vec<u8>, String)> {
     }
 }
 
-async fn tap_device(x: f64, y: f64) -> anyhow::Result<String> {
-    match configured_platform() {
+async fn tap_device(platform: Platform, x: f64, y: f64) -> anyhow::Result<String> {
+    match platform {
         Platform::Ios => {
             let x = x.to_string();
             let y = y.to_string();
@@ -231,8 +263,8 @@ async fn tap_device(x: f64, y: f64) -> anyhow::Result<String> {
     }
 }
 
-async fn swipe_device(parameters: SwipeParameters) -> anyhow::Result<String> {
-    match configured_platform() {
+async fn swipe_device(platform: Platform, parameters: SwipeParameters) -> anyhow::Result<String> {
+    match platform {
         Platform::Ios => {
             let gestures = [
                 gesture_payload("begin", parameters.x1, parameters.y1),
@@ -255,14 +287,30 @@ async fn swipe_device(parameters: SwipeParameters) -> anyhow::Result<String> {
     }
 }
 
-async fn type_on_device(text: &str) -> anyhow::Result<String> {
-    match configured_platform() {
+async fn type_on_device(platform: Platform, text: &str) -> anyhow::Result<String> {
+    match platform {
         Platform::Ios => run_serve_sim(&["type", text]).await,
         Platform::Android => {
-            let escaped_text = text.replace(' ', "%s");
+            let escaped_text = escape_android_text(text);
             run_adb(&["shell", "input", "text", &escaped_text]).await
         }
     }
+}
+
+fn escape_android_text(text: &str) -> String {
+    let mut escaped_text = String::with_capacity(text.len());
+    for character in text.chars() {
+        match character {
+            ' ' => escaped_text.push_str("%s"),
+            '\\' | '&' | ';' | '|' | '<' | '>' | '(' | ')' | '~' | '*' | '?' | '!' | '#' | '$'
+            | '\'' | '"' => {
+                escaped_text.push('\\');
+                escaped_text.push(character);
+            }
+            _ => escaped_text.push(character),
+        }
+    }
+    escaped_text
 }
 
 async fn android_pixels(x: f64, y: f64) -> anyhow::Result<(String, String)> {
@@ -297,8 +345,27 @@ async fn wait_for_preview(url: &str) -> anyhow::Result<()> {
 
 async fn run_serve_sim(arguments: &[&str]) -> anyhow::Result<String> {
     let mut command_arguments = vec!["--yes".to_owned(), "serve-sim".to_owned()];
-    command_arguments.extend(arguments.iter().map(|argument| (*argument).to_owned()));
+    let device = std::env::var("IOS_SIMULATOR_UDID").ok();
+    if let Some(device) = device {
+        if arguments
+            .first()
+            .is_some_and(|argument| !argument.starts_with('-'))
+        {
+            command_arguments.push(arguments[0].to_owned());
+            command_arguments.extend(["--device".to_owned(), device]);
+            command_arguments.extend(arguments[1..].iter().map(|argument| (*argument).to_owned()));
+        } else {
+            command_arguments.extend(arguments.iter().map(|argument| (*argument).to_owned()));
+            command_arguments.push(device);
+        }
+    } else {
+        command_arguments.extend(arguments.iter().map(|argument| (*argument).to_owned()));
+    }
     run_command("npx", &command_arguments).await
+}
+
+fn ios_device_target() -> String {
+    std::env::var("IOS_SIMULATOR_UDID").unwrap_or_else(|_| "booted".to_owned())
 }
 
 async fn run_adb(arguments: &[&str]) -> anyhow::Result<String> {
@@ -417,7 +484,8 @@ async fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        gesture_payload, parse_display_size, validate_coordinates, validate_screenshot_name,
+        Platform, escape_android_text, gesture_payload, parse_display_size, parse_platform,
+        validate_coordinates, validate_screenshot_name,
     };
 
     #[test]
@@ -448,5 +516,16 @@ mod tests {
     #[test]
     fn parses_android_display_size() {
         assert_eq!(parse_display_size("1080x2400").unwrap(), (1080.0, 2400.0));
+    }
+
+    #[test]
+    fn escapes_android_text_for_adb_shell() {
+        assert_eq!(escape_android_text("hello world!"), "hello%sworld\\!");
+    }
+
+    #[test]
+    fn rejects_unknown_platforms() {
+        assert!(parse_platform("windows").is_err());
+        assert_eq!(parse_platform("ANDROID").unwrap(), Platform::Android);
     }
 }
