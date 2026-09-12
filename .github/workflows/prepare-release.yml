@@ -48,7 +48,7 @@ jobs:
           git add CHANGELOG.md Cargo.toml Cargo.lock
           git commit -m "chore(release): prepare for v$VERSION"
           BRANCH="release/v$VERSION-rc.${{ github.run_attempt }}"
-          git push origin HEAD:"$BRANCH"
+          git push --force-with-lease origin HEAD:"$BRANCH"
           gh pr create --base main --head "$BRANCH" \
             --title "Release v$VERSION" \
             --body "Automated release preparation for v$VERSION."
