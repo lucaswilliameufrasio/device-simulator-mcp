@@ -7,4 +7,4 @@
 - Keep code, comments, and tests in English.
 - Do not use shell interpolation for user-provided tool arguments.
 - Run Rust checks and `pnpm --dir docs-site build` before handoff.
-- Keep the repository private until the release installer and device flows have been validated.
+- Keep release installers and device flows validated before publishing changes.

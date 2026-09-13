@@ -23,7 +23,7 @@ Use Conventional Commits with English subjects, for example:
 ```text
 feat: add Android emulator capture
 fix: preserve spaces in typed text
-docs: explain private release downloads
+docs: explain release downloads
 ```
 
 ## Releases

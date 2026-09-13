@@ -7,8 +7,8 @@ bin_dir="${HOME}/.local/bin"
 
 usage() {
   printf '%s\n' \
-    'Usage: install-private.sh [--tag vX.Y.Z] [--bin-dir PATH]' \
-    'Requires an authenticated gh CLI session.'
+    'Usage: install.sh [--tag vX.Y.Z] [--bin-dir PATH]' \
+    'Requires the GitHub CLI.'
 }
 
 while [[ $# -gt 0 ]]; do
@@ -34,7 +34,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 command -v gh >/dev/null 2>&1 || {
-  printf '%s\n' 'gh CLI is required.' >&2
+  printf '%s\n' 'The GitHub CLI is required.' >&2
   exit 1
 }
 
