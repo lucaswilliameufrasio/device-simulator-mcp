@@ -56,7 +56,7 @@ const description =
           </div>
         </div>
 
-        <div class="trace-panel overflow-hidden border border-steel bg-panel shadow-[12px_12px_0_#263033]" aria-label="MCP command trace">
+        <div class="trace-panel self-start overflow-hidden border border-steel bg-panel shadow-[12px_12px_0_#263033]" aria-label="MCP command trace">
           <div class="flex items-center justify-between border-b border-steel px-4 py-3 font-mono text-[11px] text-fog sm:px-6">
             <span>agent / device loop</span>
             <span class="flex items-center gap-2"><i class="size-2 rounded-full bg-mint"></i> connected</span>
@@ -102,21 +102,24 @@ const description =
       <section id="install" class="grid gap-8 border-b border-steel py-16 sm:py-24 lg:grid-cols-[0.7fr_1.3fr] lg:gap-20 lg:py-28">
         <div>
           <p class="font-mono text-xs text-mint">Start from your terminal</p>
-          <h2 class="mt-5 max-w-md text-4xl font-semibold leading-[0.95] tracking-[-0.06em] sm:text-5xl">Install once. Inspect whenever.</h2>
+          <h2 class="mt-5 max-w-md text-4xl font-semibold leading-[0.95] tracking-[-0.06em] sm:text-5xl">One server. Two device targets.</h2>
           <p class="mt-6 max-w-md text-sm leading-7 text-fog sm:text-base">
-            The binary stays local. Your existing iOS and Android SDKs do the device work.
+            Install the binary once, boot a device, then choose iOS or Android with one environment variable.
           </p>
         </div>
-        <div class="min-w-0 border border-steel bg-panel p-4 sm:p-6">
-          <pre class="m-0 max-w-full whitespace-pre-wrap break-words font-mono text-xs leading-6 text-fog sm:text-sm"><code><span class="text-fog"># install the release binary</span>
-cargo install --git https://github.com/
-  lucaswilliameufrasio/device-simulator-mcp
-
-<span class="text-fog"># configure your MCP host</span>
-&#123;
-  <span class="text-mint">"command"</span>: <span class="text-paper">"device-simulator-mcp"</span>,
-  <span class="text-mint">"env"</span>: &#123; <span class="text-mint">"DEVICE_PLATFORM"</span>: <span class="text-orange">"ios"</span> &#125;
-&#125;</code></pre>
+        <div class="grid min-w-0 gap-px border border-steel bg-steel sm:grid-cols-2">
+          <div class="install-option bg-panel p-4 sm:p-6">
+            <p class="font-mono text-xs text-mint">iOS</p>
+            <pre class="m-0 mt-4 max-w-full whitespace-pre-wrap break-words font-mono text-xs leading-6 text-fog sm:text-sm"><code>DEVICE_PLATFORM=ios
+device-simulator-mcp</code></pre>
+            <p class="mt-4 text-xs leading-5 text-fog">Uses <code class="font-mono text-paper">serve-sim</code> and the selected Simulator.</p>
+          </div>
+          <div class="install-option bg-panel p-4 sm:p-6">
+            <p class="font-mono text-xs text-orange">Android</p>
+            <pre class="m-0 mt-4 max-w-full whitespace-pre-wrap break-words font-mono text-xs leading-6 text-fog sm:text-sm"><code>DEVICE_PLATFORM=android
+device-simulator-mcp</code></pre>
+            <p class="mt-4 text-xs leading-5 text-fog">Uses <code class="font-mono text-paper">adb</code> and the selected Emulator.</p>
+          </div>
         </div>
       </section>
 
