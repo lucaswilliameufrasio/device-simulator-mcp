@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{io, path::PathBuf, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64_STANDARD};
@@ -487,12 +487,22 @@ async fn run_adb_bytes(runner: &dyn CommandRunner, arguments: &[&str]) -> anyhow
         command_arguments.extend(["-s".to_owned(), serial]);
     }
     command_arguments.extend(arguments.iter().map(|argument| (*argument).to_owned()));
-    let output = runner.run("adb", &command_arguments).await?;
+    let output = runner
+        .run("adb", &command_arguments)
+        .await
+        .map_err(|error| actionable_command_error("adb", error))?;
     if !output.success {
+        let output_message = command_output(
+            &String::from_utf8_lossy(&output.stdout),
+            &String::from_utf8_lossy(&output.stderr),
+        );
+        if let Some(error) = actionable_device_failure("adb", &output_message) {
+            return Err(error);
+        }
         return Err(anyhow::anyhow!(
             "adb failed with {}: {}",
             output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
+            output_message
         ));
     }
     Ok(output.stdout)
@@ -503,17 +513,72 @@ async fn run_command(
     command: &str,
     arguments: &[String],
 ) -> anyhow::Result<CommandOutput> {
-    let output = runner.run(command, arguments).await?;
+    let output = runner
+        .run(command, arguments)
+        .await
+        .map_err(|error| actionable_command_error(command, error))?;
     let standard_output = String::from_utf8_lossy(&output.stdout);
     let standard_error = String::from_utf8_lossy(&output.stderr);
     if !output.success {
+        let output_message = command_output(&standard_output, &standard_error);
+        if let Some(error) = actionable_device_failure(command, &output_message) {
+            return Err(error);
+        }
         return Err(anyhow::anyhow!(
             "{command} failed with {}: {}",
             output.status,
-            command_output(&standard_output, &standard_error)
+            output_message
         ));
     }
     Ok(output)
+}
+
+fn actionable_command_error(command: &str, error: anyhow::Error) -> anyhow::Error {
+    let is_missing_command = error
+        .downcast_ref::<io::Error>()
+        .is_some_and(|io_error| io_error.kind() == io::ErrorKind::NotFound);
+    if !is_missing_command {
+        return error;
+    }
+
+    let message = match command {
+        "adb" => {
+            "`adb` was not found. Install Android SDK Platform-Tools, add its ".to_owned()
+                + "platform-tools directory to PATH, and retry."
+        }
+        "npx" => {
+            "`npx` was not found. Install Node.js 24.21.0 or newer, ensure ".to_owned()
+                + "npx is on PATH, and retry."
+        }
+        "xcrun" => {
+            "`xcrun` was not found. Install Xcode Command Line Tools with ".to_owned()
+                + "`xcode-select --install`, then retry."
+        }
+        _ => format!("`{command}` was not found. Install it and ensure it is on PATH, then retry."),
+    };
+    anyhow::anyhow!(message)
+}
+
+fn actionable_device_failure(command: &str, output: &str) -> Option<anyhow::Error> {
+    if command == "adb"
+        && (output.contains("no devices/emulators found") || output.contains("device offline"))
+    {
+        return Some(anyhow::anyhow!(
+            "No usable Android device was found. Start an Android Emulator or connect a device, "
+                .to_owned()
+                + "then retry. Set ANDROID_SERIAL when more than one device is available."
+        ));
+    }
+
+    if command == "npx" && output.contains("could not determine executable to run") {
+        return Some(anyhow::anyhow!(
+            "`serve-sim` could not be started through npx. Install Node.js 24.21.0 or newer, "
+                .to_owned()
+                + "ensure npx is on PATH, and retry."
+        ));
+    }
+
+    None
 }
 
 fn temporary_screenshot_path(name: &str) -> PathBuf {
@@ -578,6 +643,7 @@ async fn main() -> anyhow::Result<()> {
 mod tests {
     use std::{
         collections::VecDeque,
+        io,
         sync::{Arc, Mutex},
     };
 
@@ -586,10 +652,10 @@ mod tests {
 
     use super::{
         CaptureParameters, CommandOutput, CommandRunner, DeviceSimulatorMcp, Platform,
-        SwipeParameters, TapParameters, TypeParameters, command_output, escape_android_text,
-        gesture_payload, parse_display_size, parse_platform, status_device, swipe_device,
-        tap_device, temporary_screenshot_path, type_on_device, validate_coordinates,
-        validate_screenshot_name,
+        SwipeParameters, TapParameters, TypeParameters, actionable_command_error,
+        actionable_device_failure, command_output, escape_android_text, gesture_payload,
+        parse_display_size, parse_platform, status_device, swipe_device, tap_device,
+        temporary_screenshot_path, type_on_device, validate_coordinates, validate_screenshot_name,
     };
 
     #[derive(Default)]
@@ -986,5 +1052,57 @@ mod tests {
         unsafe {
             std::env::remove_var("DEVICE_PLATFORM");
         }
+    }
+
+    #[test]
+    fn explains_how_to_install_missing_platform_commands() {
+        let missing_adb = actionable_command_error(
+            "adb",
+            anyhow::Error::new(io::Error::from(io::ErrorKind::NotFound)),
+        );
+        let missing_npx = actionable_command_error(
+            "npx",
+            anyhow::Error::new(io::Error::from(io::ErrorKind::NotFound)),
+        );
+        let missing_xcrun = actionable_command_error(
+            "xcrun",
+            anyhow::Error::new(io::Error::from(io::ErrorKind::NotFound)),
+        );
+
+        assert!(missing_adb.to_string().contains("Platform-Tools"));
+        assert!(missing_npx.to_string().contains("Node.js 24.21.0"));
+        assert!(missing_xcrun.to_string().contains("xcode-select --install"));
+    }
+
+    #[test]
+    fn preserves_non_missing_command_errors() {
+        let original_error = anyhow::anyhow!("permission denied");
+
+        let error = actionable_command_error("adb", original_error);
+
+        assert_eq!(error.to_string(), "permission denied");
+    }
+
+    #[test]
+    fn explains_how_to_start_an_android_device() {
+        let error = actionable_device_failure("adb", "error: no devices/emulators found").unwrap();
+
+        assert!(error.to_string().contains("Start an Android Emulator"));
+        assert!(error.to_string().contains("ANDROID_SERIAL"));
+    }
+
+    #[test]
+    fn explains_how_to_repair_serve_sim_startup() {
+        let error =
+            actionable_device_failure("npx", "could not determine executable to run").unwrap();
+
+        assert!(error.to_string().contains("serve-sim"));
+        assert!(error.to_string().contains("Node.js 24.21.0"));
+    }
+
+    #[test]
+    fn does_not_replace_unrelated_command_failures() {
+        assert!(actionable_device_failure("adb", "permission denied").is_none());
+        assert!(actionable_device_failure("npx", "network timeout").is_none());
     }
 }

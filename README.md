@@ -72,6 +72,18 @@ Set `ANDROID_SERIAL` when more than one Android device is available.
 The server does not build, install, launch, reset, or modify applications.
 Everything runs locally and screenshots are returned directly to the MCP host.
 
+## Troubleshooting
+
+If a tool reports that `adb` was not found, install Android SDK
+Platform-Tools and add its `platform-tools` directory to `PATH`. Then start an
+Android Emulator or connect a device. Set `ANDROID_SERIAL` when more than one
+device is available.
+
+If an iOS tool reports that `npx` or `xcrun` was not found, install Node.js
+24.21.0 or newer and Xcode Command Line Tools. Run
+`xcode-select --install`, ensure `npx` is on `PATH`, and boot an iOS
+Simulator.
+
 ## Development
 
 ```bash
