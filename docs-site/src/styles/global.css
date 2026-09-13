@@ -1,1 +1,17 @@
 @import "tailwindcss";
+
+@theme {
+  --color-graphite: #111417;
+  --color-panel: #1b2023;
+  --color-steel: #354044;
+  --color-paper: #e6ece8;
+  --color-fog: #aab8b3;
+  --color-mint: #73e7d2;
+  --color-orange: #ff9f68;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+::selection {
+  background: var(--color-mint);
+  color: var(--color-graphite);
+}
