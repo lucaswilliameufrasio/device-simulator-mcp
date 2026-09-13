@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.2] - 2026-09-13
+
+### CI / Build
+
+- Configure cargo-dist action pins
+
+
+### Other
+
+- Add mocked backend and device e2e coverage
+
 ## [0.1.1] - 2026-09-12
 
 ### Features
