@@ -68,9 +68,13 @@ Set `ANDROID_SERIAL` when more than one Android device is available.
 - `device_tap`: tap a normalized coordinate between `0` and `1`.
 - `device_swipe`: swipe between normalized coordinates.
 - `device_type`: type into the focused control.
+- `device_repair_input`: repair iOS Simulator input services. This restarts
+  SpringBoard and closes running apps; use only when input is broken.
 
-The server does not build, install, launch, reset, or modify applications.
-Everything runs locally and screenshots are returned directly to the MCP host.
+The server does not build, install, launch, or modify applications. The
+explicit iOS input-repair tool is an exception to normal device interaction:
+it restarts SpringBoard and closes open apps. Everything runs locally and
+screenshots are returned directly to the MCP host.
 
 ## Troubleshooting
 
@@ -83,6 +87,20 @@ If an iOS tool reports that `npx` or `xcrun` was not found, install Node.js
 24.21.0 or newer and Xcode Command Line Tools. Run
 `xcode-select --install`, ensure `npx` is on `PATH`, and boot an iOS
 Simulator.
+
+### iOS keyboard or touch input on Xcode 27
+
+Xcode 27 routes Simulator input through Device Hub. Keep Device Hub open and
+make sure the target Simulator window is visible and frontmost. macOS may also
+require Accessibility permission for the application that launched this MCP
+server (for example, your terminal or editor); check **System Settings →
+Privacy & Security → Accessibility**.
+
+If `device_type` or touch input still does not reach the Simulator, call
+`device_repair_input` explicitly. It runs `serve-sim repair-input`, which
+restarts SpringBoard and closes running apps. Afterward, restart the
+`serve-sim` stream with `device_stop` and `device_start`, then reopen your app.
+This repair is not run automatically by `device_type`.
 
 ## Development
 

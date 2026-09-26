@@ -218,6 +218,25 @@ impl DeviceSimulatorMcp {
             Err(error) => failure(error),
         }
     }
+
+    #[tool(
+        description = "Repair iOS Simulator input when keyboard or touch input stops working. This restarts SpringBoard and closes running apps."
+    )]
+    async fn device_repair_input(&self) -> CallToolResult {
+        let platform = match configured_platform() {
+            Ok(platform) => platform,
+            Err(error) => return failure(error),
+        };
+        match platform {
+            Platform::Ios => match run_serve_sim(self.runner.as_ref(), &["repair-input"]).await {
+                Ok(message) => success(message),
+                Err(error) => failure(error),
+            },
+            Platform::Android => failure(anyhow::anyhow!(
+                "device_repair_input is only supported for iOS Simulators"
+            )),
+        }
+    }
 }
 
 fn configured_platform() -> anyhow::Result<Platform> {
@@ -1046,6 +1065,99 @@ mod tests {
                 text: String::new(),
             }))
             .await;
+
+        assert_eq!(result.is_error, Some(true));
+        assert!(runner.calls().is_empty());
+        unsafe {
+            std::env::remove_var("DEVICE_PLATFORM");
+        }
+    }
+
+    #[tokio::test]
+    async fn repair_input_runs_serve_sim_repair_for_ios() {
+        unsafe {
+            std::env::set_var("DEVICE_PLATFORM", "ios");
+        }
+        let runner = Arc::new(FakeCommandRunner::with_outputs(vec![successful_output(
+            "Input services repaired",
+        )]));
+        let service = DeviceSimulatorMcp {
+            runner: runner.clone(),
+        };
+
+        let result = service.device_repair_input().await;
+
+        assert_eq!(result.is_error, Some(false));
+        assert_eq!(
+            runner.calls(),
+            vec![(
+                "npx".to_owned(),
+                vec![
+                    "--yes".to_owned(),
+                    "serve-sim".to_owned(),
+                    "repair-input".to_owned()
+                ]
+            )]
+        );
+        unsafe {
+            std::env::remove_var("DEVICE_PLATFORM");
+        }
+    }
+
+    #[tokio::test]
+    async fn rejects_repair_input_on_android_without_running_a_command() {
+        unsafe {
+            std::env::set_var("DEVICE_PLATFORM", "android");
+        }
+        let runner = Arc::new(FakeCommandRunner::default());
+        let service = DeviceSimulatorMcp {
+            runner: runner.clone(),
+        };
+
+        let result = service.device_repair_input().await;
+
+        assert_eq!(result.is_error, Some(true));
+        assert!(runner.calls().is_empty());
+        unsafe {
+            std::env::remove_var("DEVICE_PLATFORM");
+        }
+    }
+
+    #[tokio::test]
+    async fn returns_repair_command_failure_to_the_caller() {
+        unsafe {
+            std::env::set_var("DEVICE_PLATFORM", "ios");
+        }
+        let runner = Arc::new(FakeCommandRunner::with_outputs(vec![CommandOutput {
+            success: false,
+            status: "exit status: 1".to_owned(),
+            stdout: Vec::new(),
+            stderr: b"repair failed".to_vec(),
+        }]));
+        let service = DeviceSimulatorMcp {
+            runner: runner.clone(),
+        };
+
+        let result = service.device_repair_input().await;
+
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(runner.calls().len(), 1);
+        unsafe {
+            std::env::remove_var("DEVICE_PLATFORM");
+        }
+    }
+
+    #[tokio::test]
+    async fn rejects_repair_input_for_an_unsupported_platform() {
+        unsafe {
+            std::env::set_var("DEVICE_PLATFORM", "unsupported");
+        }
+        let runner = Arc::new(FakeCommandRunner::default());
+        let service = DeviceSimulatorMcp {
+            runner: runner.clone(),
+        };
+
+        let result = service.device_repair_input().await;
 
         assert_eq!(result.is_error, Some(true));
         assert!(runner.calls().is_empty());
