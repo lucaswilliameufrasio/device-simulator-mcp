@@ -677,6 +677,8 @@ mod tests {
         temporary_screenshot_path, type_on_device, validate_coordinates, validate_screenshot_name,
     };
 
+    static DEVICE_PLATFORM_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
     #[derive(Default)]
     struct FakeCommandRunner {
         outputs: Mutex<VecDeque<CommandOutput>>,
@@ -993,6 +995,7 @@ mod tests {
 
     #[tokio::test]
     async fn delegates_android_tool_handlers_to_the_command_runner() {
+        let _environment_lock = DEVICE_PLATFORM_LOCK.lock().await;
         unsafe {
             std::env::set_var("DEVICE_PLATFORM", "android");
         }
@@ -1052,6 +1055,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_empty_text_before_calling_external_commands() {
+        let _environment_lock = DEVICE_PLATFORM_LOCK.lock().await;
         unsafe {
             std::env::set_var("DEVICE_PLATFORM", "android");
         }
@@ -1075,6 +1079,7 @@ mod tests {
 
     #[tokio::test]
     async fn repair_input_runs_serve_sim_repair_for_ios() {
+        let _environment_lock = DEVICE_PLATFORM_LOCK.lock().await;
         unsafe {
             std::env::set_var("DEVICE_PLATFORM", "ios");
         }
@@ -1106,6 +1111,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_repair_input_on_android_without_running_a_command() {
+        let _environment_lock = DEVICE_PLATFORM_LOCK.lock().await;
         unsafe {
             std::env::set_var("DEVICE_PLATFORM", "android");
         }
@@ -1125,6 +1131,7 @@ mod tests {
 
     #[tokio::test]
     async fn returns_repair_command_failure_to_the_caller() {
+        let _environment_lock = DEVICE_PLATFORM_LOCK.lock().await;
         unsafe {
             std::env::set_var("DEVICE_PLATFORM", "ios");
         }
@@ -1149,6 +1156,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_repair_input_for_an_unsupported_platform() {
+        let _environment_lock = DEVICE_PLATFORM_LOCK.lock().await;
         unsafe {
             std::env::set_var("DEVICE_PLATFORM", "unsupported");
         }
