@@ -1,7 +1,11 @@
+mod cli;
+mod install_mcp;
+
 use std::{io, path::PathBuf, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64_STANDARD};
+use clap::Parser;
 use rmcp::{
     ServiceExt,
     handler::server::wrapper::Parameters,
@@ -647,6 +651,14 @@ fn failure(error: anyhow::Error) -> CallToolResult {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    if std::env::args_os().len() > 1 {
+        let cli = cli::Cli::parse();
+        match cli.command {
+            cli::CliCommand::InstallMcp(arguments) => install_mcp::run(arguments)?,
+        }
+        return Ok(());
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .with_writer(std::io::stderr)

@@ -2,6 +2,19 @@ use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 
 #[test]
+fn prints_install_mcp_help_without_starting_the_server() {
+    let output = Command::new(env!("CARGO_BIN_EXE_device-simulator-mcp"))
+        .args(["install-mcp", "--help"])
+        .output()
+        .expect("failed to start CLI");
+
+    assert!(output.status.success());
+    let help = String::from_utf8(output.stdout).expect("CLI help should be UTF-8");
+    assert!(help.contains("--client"));
+    assert!(help.contains("--apply"));
+}
+
+#[test]
 fn rejects_invalid_tool_arguments_through_stdio_protocol() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_device-simulator-mcp"))
         .env("DEVICE_PLATFORM", "unsupported")
