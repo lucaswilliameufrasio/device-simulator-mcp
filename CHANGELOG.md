@@ -2,22 +2,49 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.4] - 2026-09-26
+
+### Bug Fixes
+
+- Expose iOS simulator input repair
+
+
+### Chores
+
+- Add release notes and project skills
+
+
+### Other
+
+- Serialize platform environment tests
+
 ## [0.1.3] - 2026-09-13
 
 ### Bug Fixes
 
-- Explain how to install missing device dependencies.
-- Report actionable errors when Android devices are unavailable.
+- Keep public installer executable
+
+- Replace Astro favicon
+
+- Clarify platform setup instructions
+
+- Explain missing device dependencies
+
 
 ### Documentation
 
-- Add platform troubleshooting guidance.
+- Prepare repository for public release
 
 ## [0.1.2] - 2026-09-13
 
 ### CI / Build
 
 - Configure cargo-dist action pins
+
+
+### Features
+
+- Redesign device simulator landing page
 
 
 ### Other
@@ -42,3 +69,4 @@ All notable changes to this project will be documented in this file.
 ### Features
 
 - Add cross-platform device simulator MCP
+
