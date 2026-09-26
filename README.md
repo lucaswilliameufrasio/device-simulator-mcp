@@ -39,6 +39,32 @@ Build locally:
 cargo build --release
 ```
 
+## Register with an AI client
+
+The binary can print or apply an MCP configuration for OpenCode, Claude Code,
+Codex CLI, Cursor, or Gemini CLI. Preview first; `--apply` updates only the
+`device-simulator` entry and preserves other client settings.
+
+```bash
+# Preview the user-wide OpenCode configuration (default scope: user).
+device-simulator-mcp install-mcp --client opencode
+
+# Apply it. The executable path defaults to the running binary.
+device-simulator-mcp install-mcp --client opencode --apply
+
+# Use Android instead of the default iOS platform.
+device-simulator-mcp install-mcp --client codex --platform android --apply
+
+# Run from the project root to add the server only to that project.
+device-simulator-mcp install-mcp --client cursor --scope project --apply
+```
+
+Use `--config-file PATH` to target a non-default configuration file or
+`--binary PATH` if the installed executable should be registered at another
+path. JSON/JSONC comments and Codex TOML comments are preserved. Restart the AI
+client after applying the configuration. This command registers the stdio MCP
+server; it does not install lifecycle hooks.
+
 ## MCP Configuration
 
 The server uses stdio. Set `DEVICE_PLATFORM` to `ios` or `android`.

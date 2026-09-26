@@ -133,6 +133,17 @@ device-simulator-mcp</code></pre>
         </div>
       </section>
 
+      <section class="border-b border-steel py-16 sm:py-20">
+        <p class="font-mono text-xs text-mint">Configure an AI client</p>
+        <h2 class="mt-5 max-w-2xl text-3xl font-semibold leading-tight tracking-[-0.05em] sm:text-4xl">Preview the MCP entry, then apply it.</h2>
+        <p class="mt-5 max-w-3xl text-sm leading-7 text-fog sm:text-base">
+          The CLI registers the stdio server for OpenCode, Claude Code, Codex CLI, Cursor, or Gemini CLI. It defaults to user-wide iOS configuration; choose <code class="font-mono text-paper">--scope project</code> or <code class="font-mono text-paper">--platform android</code> when needed.
+        </p>
+        <pre class="mt-6 max-w-3xl overflow-x-auto border border-steel bg-panel p-5 font-mono text-xs leading-6 text-fog sm:text-sm"><code>device-simulator-mcp install-mcp --client opencode
+device-simulator-mcp install-mcp --client opencode --apply</code></pre>
+        <p class="mt-4 text-xs leading-5 text-fog">Applying updates only this server's entry and preserves other settings. Restart the AI client afterward. This registers MCP and does not install lifecycle hooks.</p>
+      </section>
+
       <section class="flex flex-col gap-7 py-16 sm:py-24 lg:flex-row lg:items-end lg:justify-between lg:py-28">
         <div>
           <p class="font-mono text-xs text-mint">Built for local visual feedback</p>
