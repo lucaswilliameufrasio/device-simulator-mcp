@@ -11,14 +11,21 @@ anyhow = "1.0.104"
 async-trait = "0.1.89"
 base64 = "0.23.1"
 clap = { version = "4.6.7", features = ["derive"] }
+futures-util = "0.3.34"
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg"] }
 jsonc-parser = { version = "0.33.2", features = ["cst"] }
+prost = "0.14.4"
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "stream"] }
 rmcp = { version = "3.3.0", features = ["server", "macros", "transport-io", "schemars"] }
 schemars = "1.2.2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.149"
 tempfile = "3.27.0"
-tokio = { version = "1.53.1", features = ["fs", "macros", "net", "process", "rt-multi-thread", "time"] }
+tokio = { version = "1.53.1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
+tokio-tungstenite = "0.30.0"
 toml_edit = "0.25.15"
+tonic = { version = "0.14.6", default-features = false, features = ["channel", "codegen"] }
+tonic-prost = "0.14.6"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
 
@@ -26,3 +33,6 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
 [profile.dist]
 inherits = "release"
 lto = "thin"
+
+[target."cfg(unix)".dependencies]
+libc = "0.2.190"

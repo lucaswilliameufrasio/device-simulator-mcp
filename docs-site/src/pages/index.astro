@@ -69,7 +69,7 @@ const description =
             </div>
             <div class="space-y-3 font-mono text-xs leading-6 sm:text-sm">
               <div class="trace-row"><span class="text-fog">01</span><span class="text-orange">device_capture</span><span class="text-fog">checkout</span><b class="text-mint">PNG returned</b></div>
-              <div class="trace-row"><span class="text-fog">02</span><span class="text-orange">device_tap</span><span class="text-fog">0.52, 0.71</span><b class="text-mint">screen changed</b></div>
+              <div class="trace-row"><span class="text-fog">02</span><span class="text-orange">device_tap</span><span class="text-fog">0.52, 0.71</span><b class="text-mint">input submitted</b></div>
               <div class="trace-row"><span class="text-fog">03</span><span class="text-orange">device_type</span><span class="text-fog">email</span><b class="text-mint">input sent</b></div>
               <div class="trace-row"><span class="text-fog">04</span><span class="text-orange">device_capture</span><span class="text-fog">after-login</span><b class="text-mint">PNG returned</b></div>
             </div>
@@ -91,12 +91,25 @@ const description =
           </p>
         </div>
         <div class="divide-y divide-steel border-y border-steel">
-          <div class="tool-row"><code class="text-mint">device_capture</code><p>Return the current display as PNG image content.</p></div>
+          <div class="tool-row"><code class="text-mint">device_capture</code><p>Return PNG by default, or request a smaller JPEG, resize, or crop.</p></div>
+          <div class="tool-row"><code class="text-orange">device_step</code><p>Run known actions in order with one optional final screenshot. Bounded deadline and partial-completion reporting.</p></div>
+          <div class="tool-row"><code class="text-mint">device_inspect</code><p>Fetch bounded iOS accessibility on demand through the opt-in persistent backend.</p></div>
           <div class="tool-row"><code class="text-orange">device_tap</code><p>Tap normalized coordinates from 0 to 1.</p></div>
           <div class="tool-row"><code class="text-mint">device_swipe</code><p>Move through a screen with one platform-neutral gesture.</p></div>
           <div class="tool-row"><code class="text-orange">device_type</code><p>Type into the focused control on either platform.</p></div>
           <div class="tool-row"><code class="text-paper">device_repair_input</code><p>Repair iOS Simulator input services. Restarts SpringBoard and closes running apps.</p></div>
           <div class="tool-row"><code class="text-paper">device_status</code><p>Show which simulator or emulator is available.</p></div>
+        </div>
+      </section>
+
+      <section class="border-b border-steel py-16 sm:py-20">
+        <p class="font-mono text-xs text-mint">Fewer processes / smaller observations</p>
+        <h2 class="mt-5 max-w-2xl text-3xl font-semibold leading-tight tracking-[-0.05em] sm:text-4xl">Keep the connection. Request only what you need.</h2>
+        <div class="mt-6 max-w-3xl space-y-4 text-sm leading-7 text-fog sm:text-base">
+          <p>The opt-in iOS backend connects directly to a pinned serve-sim server over a reusable WebSocket. Latest-frame capture can avoid simctl, but frames may be replayed: it is not proof that an action finished rendering.</p>
+          <p>Use <code class="font-mono text-paper">device_step</code> for already-known actions and one final observation. Choose JPEG and a maximum dimension to reduce image payloads. Fresh PNG capture remains the compatible default; continuous video is not added to model context.</p>
+          <p>Android keeps ADB as the default. Emulator gRPC is an authenticated, experimental opt-in backend, not a validated replacement yet. Helpers started by this MCP are owned and cleaned up; externally started streams are never stopped.</p>
+          <a class="inline-block border-b border-mint text-mint focus-visible:outline-2 focus-visible:outline-mint" href="https://github.com/lucaswilliameufrasio/device-simulator-mcp#faster-agent-loops">Backend setup, limits, and benchmarks</a>
         </div>
       </section>
 
