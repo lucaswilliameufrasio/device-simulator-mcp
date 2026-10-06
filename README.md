@@ -227,6 +227,16 @@ Accessibility is fetched only by `device_inspect` (up to 200 elements/depth 16)
 and can be unavailable or slower than capture. Select `DEVICE_IOS_BACKEND=cli`
 to roll back. No default-backend promotion has been made.
 
+`device_inspect` accepts optional `max_elements` (1–200), `max_depth` (1–16),
+`label_contains`, exact `identifier`, and exact `role` (or `type` if role is
+absent). Filters are case-sensitive and all match the same node. Empty arguments
+keep the existing defaults. Results report `truncated`; traversal is capped at
+4096 values, strings at 512 characters, and serialized output at 256 KiB.
+Limits or filters cannot prove absence outside the inspected portion of a tree.
+Steps can use the same options in `accessibility_options`, but only with
+`accessibility: true`. Element waits search the default bounded projection;
+output filters apply after matching, without another AX fetch or screenshot.
+
 ### Android Emulator gRPC prototype (experimental, opt-in)
 
 ADB remains the default, including for physical devices. An experimental

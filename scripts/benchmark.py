@@ -28,6 +28,7 @@ def main():
     parser.add_argument("--timeout", type=float, default=30)
     parser.add_argument("--capture-arguments", default="{}")
     parser.add_argument("--inspect", action="store_true", help="Also benchmark on-demand iOS accessibility")
+    parser.add_argument("--inspect-arguments", default="{}", help="JSON filters/limits for device_inspect")
     parser.add_argument("--step", action="store_true", help="Also benchmark a capture-only device_step (no input)")
     parser.add_argument("--step-wait", choices=["visual_stability"], help="Use fresh visual stability for capture-only steps")
     parser.add_argument("--lifecycle", action="store_true", help="Start inspection first and stop only MCP-owned resources afterward")
@@ -89,7 +90,7 @@ def main():
             ("device_status", {}), ("device_capture", capture_arguments),
         ]
         if args.inspect:
-            tools.append(("device_inspect", {}))
+            tools.append(("device_inspect", json.loads(args.inspect_arguments)))
         if args.step:
             step = {"actions": [], "capture": capture_arguments}
             if args.step_wait:

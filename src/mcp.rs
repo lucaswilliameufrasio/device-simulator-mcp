@@ -1,5 +1,6 @@
 use crate::{
-    android_grpc, frame_cache, ios, ios_lifecycle, observation, process, session, visual_wait,
+    accessibility, android_grpc, frame_cache, ios, ios_lifecycle, observation, process, session,
+    visual_wait,
 };
 
 use std::{io, sync::Arc, time::Duration};
@@ -91,6 +92,8 @@ struct StepParameters {
     /// Return bounded iOS accessibility instead of a screenshot.
     #[serde(default)]
     accessibility: bool,
+    /// Optional filters/limits for accessibility output; requires accessibility=true.
+    accessibility_options: Option<accessibility::Options>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -455,9 +458,10 @@ impl DeviceSimulatorMcp {
                 if parameters.accessibility {
                     let snapshot = match wait_accessibility {
                         Some(snapshot) => snapshot,
-                        None => compact_accessibility(self.ios.accessibility().await?),
+                        None => self.ios.accessibility().await?,
                     };
-                    return Ok(vec![ContentBlock::text(snapshot)]);
+                    return Ok(vec![ContentBlock::text(accessibility::project(&snapshot,
+                        &parameters.accessibility_options.unwrap_or_default()))]);
                 }
                 match parameters.capture {
                     Some(capture) => self.capture_with_frame(platform, capture, wait_frame).await,
@@ -487,7 +491,13 @@ impl DeviceSimulatorMcp {
     #[tool(
         description = "Inspect iOS accessibility on demand through the opt-in persistent serve-sim backend. Output is bounded and can be truncated; no screenshot is collected."
     )]
-    async fn device_inspect(&self) -> CallToolResult {
+    async fn device_inspect(
+        &self,
+        Parameters(options): Parameters<accessibility::Options>,
+    ) -> CallToolResult {
+        if let Err(error) = options.validate() {
+            return failure(error);
+        }
         self.session
             .execute("inspect", Duration::from_secs(15), async {
                 if !matches!(configured_platform(), Ok(Platform::Ios)) {
@@ -496,7 +506,7 @@ impl DeviceSimulatorMcp {
                     ));
                 }
                 match self.ios.accessibility().await {
-                    Ok(value) => success(compact_accessibility(value)),
+                    Ok(value) => success(accessibility::project(&value, &options)),
                     Err(error) => failure(error),
                 }
             })
@@ -637,11 +647,12 @@ impl DeviceSimulatorMcp {
         &self,
         label: Option<&str>,
         identifier: Option<&str>,
-    ) -> anyhow::Result<String> {
+    ) -> anyhow::Result<serde_json::Value> {
         for _ in 0..32 {
-            let snapshot = compact_accessibility(self.ios.accessibility().await?);
+            let value = self.ios.accessibility().await?;
+            let snapshot = compact_accessibility(value.clone());
             if element_matches(&snapshot, label, identifier)? {
-                return Ok(snapshot);
+                return Ok(value);
             }
             tokio::time::sleep(Duration::from_millis(200)).await;
         }
@@ -756,6 +767,13 @@ fn validate_capture(parameters: &CaptureParameters) -> anyhow::Result<()> {
 }
 
 fn validate_step(parameters: &StepParameters) -> anyhow::Result<()> {
+    if let Some(options) = &parameters.accessibility_options {
+        anyhow::ensure!(
+            parameters.accessibility,
+            "accessibility_options requires accessibility=true"
+        );
+        options.validate()?;
+    }
     anyhow::ensure!(
         parameters.actions.len() <= 16,
         "a step supports at most 16 actions"
@@ -809,67 +827,7 @@ fn step_failure(completed: usize, stage: &str, uncertain: bool) -> CallToolResul
 }
 
 fn compact_accessibility(value: serde_json::Value) -> String {
-    fn visit(
-        value: &serde_json::Value,
-        depth: usize,
-        nodes: &mut Vec<serde_json::Value>,
-        truncated: &mut bool,
-    ) {
-        if depth > 16 || nodes.len() >= 200 {
-            *truncated = true;
-            return;
-        }
-        match value {
-            serde_json::Value::Array(values) => {
-                for value in values {
-                    visit(value, depth + 1, nodes, truncated);
-                }
-            }
-            serde_json::Value::Object(values) => {
-                let mut node = serde_json::Map::new();
-                for key in [
-                    "AXLabel",
-                    "AXValue",
-                    "AXIdentifier",
-                    "AXFrame",
-                    "frame",
-                    "label",
-                    "value",
-                    "identifier",
-                    "role",
-                    "type",
-                    "enabled",
-                    "traits",
-                ] {
-                    if let Some(value) = values.get(key) {
-                        let mut value = value.clone();
-                        if let Some(text) = value.as_str() {
-                            value = serde_json::Value::String(text.chars().take(512).collect());
-                        }
-                        if !value.is_object() || matches!(key, "frame" | "AXFrame") {
-                            node.insert(key.to_owned(), value);
-                        }
-                    }
-                }
-                if !node.is_empty() {
-                    nodes.push(serde_json::Value::Object(node));
-                }
-                for (key, value) in values {
-                    if matches!(
-                        key.as_str(),
-                        "children" | "elements" | "AXChildren" | "tree"
-                    ) {
-                        visit(value, depth + 1, nodes, truncated);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    let mut nodes = Vec::new();
-    let mut truncated = false;
-    visit(&value, 0, &mut nodes, &mut truncated);
-    serde_json::json!({"elements": nodes, "truncated": truncated, "max_elements":200, "max_depth":16}).to_string()
+    accessibility::project(&value, &Default::default())
 }
 
 fn element_matches(
@@ -2034,6 +1992,11 @@ mod tests {
                     text: "sample".to_owned(),
                 }],
                 accessibility: true,
+                accessibility_options: Some(crate::accessibility::Options {
+                    identifier: Some("sample".to_owned()),
+                    max_elements: Some(1),
+                    ..Default::default()
+                }),
                 ..Default::default()
             }))
             .await;
@@ -2103,6 +2066,11 @@ mod tests {
                     label: Some("Example".to_owned()),
                     identifier: Some("sample".to_owned()),
                 }),
+                accessibility_options: Some(crate::accessibility::Options {
+                    identifier: Some("sample".to_owned()),
+                    max_elements: Some(1),
+                    ..Default::default()
+                }),
                 ..Default::default()
             }))
             .await;
@@ -2148,6 +2116,37 @@ mod tests {
                 identifier: None
             }
             .validate()
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_invalid_inspection_options_before_backend_io() {
+        let runner = Arc::new(FakeCommandRunner::default());
+        let service = DeviceSimulatorMcp {
+            runner: runner.clone(),
+            ..Default::default()
+        };
+        let result = service
+            .device_inspect(Parameters(crate::accessibility::Options {
+                max_elements: Some(0),
+                ..Default::default()
+            }))
+            .await;
+        assert_eq!(result.is_error, Some(true));
+        assert!(runner.calls().is_empty());
+    }
+
+    #[test]
+    fn rejects_step_inspection_options_without_accessibility_output() {
+        assert!(
+            super::validate_step(&super::StepParameters {
+                actions: vec![super::Action::Type {
+                    text: "sample".to_owned()
+                }],
+                accessibility_options: Some(Default::default()),
+                ..Default::default()
+            })
             .is_err()
         );
     }

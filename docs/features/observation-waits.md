@@ -35,6 +35,14 @@ experimental Android backend. Preserve legacy tool defaults.
   sample/deadline limits and return the matched AX snapshot when AX observation
   was requested, avoiding another fetch. Unsupported capabilities are rejected
   before input. No automatic screenshot fallback or semantic mutation.
+- Inspection filters are case-sensitive: label substring, exact identifier and
+  exact role/type, all matching the same node. Defaults remain 200 elements and
+  depth 16; users may reduce these (1..200, 1..16). Bound traversal independently
+  to 4096 values so unmatched filters cannot cause unbounded work. Explicitly
+  report truncation, including long strings and the 256 KiB result limit.
+  Step AX options are valid only when AX output is requested. Element waits
+  search the default bounded projection, independently of output filters;
+  filtering never causes an extra backend fetch.
 
 **Source:** User-approved plan in ai-memory
 `ursoc/device-simulator-mcp/plans/persistent-device-performance.md`.

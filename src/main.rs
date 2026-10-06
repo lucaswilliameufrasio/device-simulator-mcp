@@ -1,3 +1,4 @@
+mod accessibility;
 mod android_grpc;
 mod cli;
 mod frame_cache;

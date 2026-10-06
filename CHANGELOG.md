@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Features
 
+- Add case-sensitive accessibility filters and configurable bounded output
+  limits for inspection and step observations.
 - Add opt-in bounded raw-frame cache, fresh visual change/stability waits and
   explicit accessibility observations in `device_step`.
 - Reuse the fresh frame that satisfies a visual wait and add bounded iOS

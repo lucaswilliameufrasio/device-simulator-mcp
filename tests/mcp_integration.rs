@@ -125,6 +125,12 @@ fn lists_legacy_and_new_tools_in_one_persistent_session() {
     let mut client = Client::start(server_command());
     let response = client.request("tools/list", serde_json::json!({}));
     let tools = response["result"]["tools"].as_array().unwrap();
+    let inspect = tools
+        .iter()
+        .find(|tool| tool["name"] == "device_inspect")
+        .unwrap();
+    assert!(inspect["inputSchema"]["properties"]["label_contains"].is_object());
+    assert!(inspect["inputSchema"]["properties"]["max_elements"].is_object());
     for name in [
         "device_start",
         "device_stop",
@@ -148,6 +154,17 @@ fn lists_legacy_and_new_tools_in_one_persistent_session() {
         );
         assert_eq!(response["result"]["isError"], true);
     }
+    let response = client.request(
+        "tools/call",
+        serde_json::json!({"name":"device_inspect",
+        "arguments":{"max_elements":0}}),
+    );
+    assert_eq!(response["result"]["isError"], true);
+    assert!(
+        response
+            .to_string()
+            .contains("max_elements must be between")
+    );
 }
 
 #[cfg(unix)]
