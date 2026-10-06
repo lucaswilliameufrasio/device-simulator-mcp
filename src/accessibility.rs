@@ -40,11 +40,13 @@ impl Options {
 
     fn matches(&self, node: &Map<String, Value>) -> bool {
         self.label_contains.as_ref().is_none_or(|query| {
-            ["label", "AXLabel"].iter().any(|key| {
-                node.get(*key)
-                    .and_then(Value::as_str)
-                    .is_some_and(|text| text.contains(query))
-            })
+            ["label", "AXLabel", "content_description"]
+                .iter()
+                .any(|key| {
+                    node.get(*key)
+                        .and_then(Value::as_str)
+                        .is_some_and(|text| text.contains(query))
+                })
         }) && self.identifier.as_ref().is_none_or(|query| {
             ["identifier", "AXIdentifier"]
                 .iter()
@@ -126,6 +128,7 @@ fn visit(value: &Value, depth: usize, options: &Options, output: &mut Projection
                     "AXLabel",
                     "AXValue",
                     "AXIdentifier",
+                    "content_description",
                     "AXFrame",
                     "frame",
                     "label",
@@ -134,6 +137,15 @@ fn visit(value: &Value, depth: usize, options: &Options, output: &mut Projection
                     "role",
                     "type",
                     "enabled",
+                    "checkable",
+                    "checked",
+                    "clickable",
+                    "focusable",
+                    "focused",
+                    "scrollable",
+                    "long_clickable",
+                    "selected",
+                    "password",
                     "traits",
                 ] {
                     if let Some(value) = values.get(key) {
@@ -174,7 +186,10 @@ fn visit(value: &Value, depth: usize, options: &Options, output: &mut Projection
 pub(crate) fn project(value: &Value, options: &Options) -> String {
     let mut output = Projection {
         elements: Vec::new(),
-        truncated: false,
+        truncated: value
+            .get("truncated")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
         max_elements: options.max_elements.unwrap_or(200),
         max_depth: options.max_depth.unwrap_or(16),
         visited_values: 0,

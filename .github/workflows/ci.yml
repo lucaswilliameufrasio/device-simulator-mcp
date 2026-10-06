@@ -14,6 +14,17 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  scripts:
+    name: Offline installer and benchmark fixtures
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: bash -n scripts/install.sh
+      - run: python3 -m unittest discover -s scripts -p 'test_*.py'
+
   rust:
     name: Rust checks
     runs-on: ubuntu-latest

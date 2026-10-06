@@ -46,8 +46,8 @@ experimental Android backend. Preserve legacy tool defaults.
 
 **Source:** User-approved plan in ai-memory
 `ursoc/device-simulator-mcp/plans/persistent-device-performance.md`.
-Arandu is currently unavailable; this canonical local record preserves these
-decisions before implementation and must be mirrored when access returns.
+Recorded locally before implementation while Arandu was unavailable. Mirrored
+on 2026-10-06 to Arandu page `01a10f82-5903-7a21-bd7c-9bcd97200961`.
 
 ## Open Questions
 

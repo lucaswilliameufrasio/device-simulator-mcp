@@ -15,6 +15,7 @@ futures-util = "0.3.34"
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg"] }
 jsonc-parser = { version = "0.33.2", features = ["cst"] }
 prost = "0.14.4"
+quick-xml = "0.42.0"
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "stream"] }
 rmcp = { version = "3.3.0", features = ["server", "macros", "transport-io", "schemars"] }
 schemars = "1.2.2"

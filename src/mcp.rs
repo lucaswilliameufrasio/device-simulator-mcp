@@ -1,13 +1,13 @@
 use crate::{
-    accessibility, android_grpc, frame_cache, ios, ios_lifecycle, observation, process, session,
-    visual_wait,
+    accessibility, android_grpc, frame_cache, ios, ios_device, ios_lifecycle, observation, process,
+    session, visual_wait,
 };
 
 use std::{sync::Arc, time::Duration};
 
 use crate::platform::{
-    Platform, capture_device, configured_platform, run_serve_sim, start_device, status_device,
-    tap_device, type_on_device,
+    Orientation, Platform, capture_device, configured_platform, inspect_android_accessibility,
+    rotate_device, run_serve_sim, start_device, status_device, tap_device, type_on_device,
 };
 #[cfg(test)]
 use crate::{
@@ -65,6 +65,46 @@ struct SwipeParameters {
 struct TypeParameters {
     #[schemars(description = "Text to type into the focused control")]
     text: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct RotateParameters {
+    #[schemars(
+        description = "Target orientation: portrait, portrait_upside_down, landscape_left, or landscape_right"
+    )]
+    orientation: Orientation,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct MultiTouchParameters {
+    /// Ordered frames submitted as simultaneous Android Emulator contacts.
+    frames: Vec<android_grpc::MultiTouchFrame>,
+    /// Total operation deadline in milliseconds (1..=20000), default 10000.
+    timeout_ms: Option<u64>,
+}
+
+impl MultiTouchParameters {
+    fn validate(&self) -> anyhow::Result<()> {
+        android_grpc::validate_multitouch_frames(&self.frames)?;
+        let timeout_ms = self.timeout_ms.unwrap_or(10_000);
+        anyhow::ensure!(
+            (1..=20_000).contains(&timeout_ms),
+            "multitouch timeout_ms must be between 1 and 20000"
+        );
+        let frame_delay_ms = self
+            .frames
+            .iter()
+            .take(self.frames.len().saturating_sub(1))
+            .map(|frame| frame.delay_ms.unwrap_or(30))
+            .sum::<u64>();
+        anyhow::ensure!(
+            frame_delay_ms < timeout_ms,
+            "multitouch timeout_ms must exceed the configured inter-frame delays"
+        );
+        Ok(())
+    }
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -138,7 +178,16 @@ impl DeviceSimulatorMcp {
             Ok(platform) => platform,
             Err(error) => return failure(error),
         };
+        let physical = if matches!(platform, Platform::Ios) {
+            match ios_device::Target::configured() {
+                Ok(target) => target,
+                Err(error) => return failure(error),
+            }
+        } else {
+            None
+        };
         let persistent = match platform {
+            Platform::Ios if physical.is_some() => Ok(false),
             Platform::Ios => self.ios.enabled(),
             Platform::Android => self.android.enabled(),
         };
@@ -146,21 +195,38 @@ impl DeviceSimulatorMcp {
             Ok(enabled) => enabled,
             Err(error) => return failure(error),
         };
-        let accessibility = matches!(platform, Platform::Ios) && persistent;
-        let backend = match (platform, persistent) {
-            (Platform::Ios, true) => "serve-sim",
-            (Platform::Ios, false) => "cli",
-            (Platform::Android, true) => "grpc",
-            (Platform::Android, false) => "adb",
+        let accessibility = if let Some(target) = &physical {
+            target.has_wda()
+        } else {
+            match platform {
+                Platform::Ios => persistent,
+                Platform::Android => !persistent,
+            }
+        };
+        let step_accessibility = matches!(platform, Platform::Ios) && accessibility;
+        let backend = if physical.is_some() {
+            "devicectl"
+        } else {
+            match (platform, persistent) {
+                (Platform::Ios, true) => "serve-sim",
+                (Platform::Ios, false) => "cli",
+                (Platform::Android, true) => "grpc",
+                (Platform::Android, false) => "adb",
+            }
         };
         success(serde_json::json!({
             "platform":if matches!(platform,Platform::Ios) {"ios"} else {"android"},
             "backend":backend,
+            "target":if physical.is_some() {"physical_device"} else {"simulator_or_emulator"},
+            "input_backend":if physical.as_ref().is_some_and(ios_device::Target::has_wda) {"webdriveragent"} else if physical.is_some() {"unavailable"} else {"native"},
             "experimental":matches!(platform,Platform::Android) && persistent,
             "availability_probed":false,
-            "observations":{"fresh_screenshot":true,"latest_frame":accessibility,"accessibility":accessibility,
+            "observations":{"fresh_screenshot":true,"latest_frame":matches!(platform, Platform::Ios) && persistent,"accessibility":accessibility,
+                "step_accessibility":step_accessibility,
                 "image_formats":["png","jpeg"],"crop":true,"resize":true,"cache_requires_explicit_target":true},
-            "wait_conditions":{"visual_change":true,"visual_stability":true,"element_present":accessibility},
+            "controls":{"orientation":matches!(platform,Platform::Ios) || !persistent,
+                "multitouch":matches!(platform,Platform::Android) && persistent},
+            "wait_conditions":{"visual_change":true,"visual_stability":true,"element_present":step_accessibility},
             "application_render_acknowledged":false,
             "limits":{"max_actions":16,"max_pending_operations":8,"max_step_timeout_ms":20000,
                 "max_cache_age_ms":5000,"max_image_dimension":4096,"max_ax_elements":200,"max_ax_depth":16},
@@ -170,16 +236,20 @@ impl DeviceSimulatorMcp {
     #[tool(description = "Start inspection for the configured device")]
     async fn device_start(&self) -> CallToolResult {
         self.session
-            .execute("start", Duration::from_secs(25), async {
+            .execute("start", Duration::from_secs(60), async {
                 self.cache.lock().await.clear();
                 let platform = match configured_platform() {
                     Ok(platform) => platform,
                     Err(error) => return failure(error),
                 };
                 let result = if matches!(platform, Platform::Ios) {
-                    match self.ios.enabled() {
-                        Ok(true) => self.ios.status().await,
-                        Ok(false) => self.lifecycle.start(self.runner.as_ref()).await,
+                    match ios_device::Target::configured() {
+                        Ok(Some(target)) => target.status(self.runner.as_ref()).await,
+                        Ok(None) => match self.ios.enabled() {
+                            Ok(true) => self.ios.status().await,
+                            Ok(false) => self.lifecycle.start(self.runner.as_ref()).await,
+                            Err(error) => Err(error),
+                        },
                         Err(error) => Err(error),
                     }
                 } else {
@@ -209,8 +279,12 @@ impl DeviceSimulatorMcp {
                     Err(error) => return failure(error),
                 };
                 match platform {
-            Platform::Ios => match self.stop_ios().await {
-                Ok(message) => success(message),
+            Platform::Ios => match ios_device::Target::configured() {
+                Ok(Some(_)) => success("Physical iPhone and external automation services were left running".to_owned()),
+                Ok(None) => match self.stop_ios().await {
+                    Ok(message) => success(message),
+                    Err(error) => failure(error),
+                },
                 Err(error) => failure(error),
             },
             Platform::Android => success(
@@ -231,9 +305,13 @@ impl DeviceSimulatorMcp {
                     Err(error) => return failure(error),
                 };
                 let result = if matches!(platform, Platform::Ios) {
-                    match self.ios.enabled() {
-                        Ok(true) => self.ios.status().await,
-                        Ok(false) => status_device(platform, self.runner.as_ref()).await,
+                    match ios_device::Target::configured() {
+                        Ok(Some(target)) => target.status(self.runner.as_ref()).await,
+                        Ok(None) => match self.ios.enabled() {
+                            Ok(true) => self.ios.status().await,
+                            Ok(false) => status_device(platform, self.runner.as_ref()).await,
+                            Err(error) => Err(error),
+                        },
                         Err(error) => Err(error),
                     }
                 } else {
@@ -346,6 +424,96 @@ impl DeviceSimulatorMcp {
     }
 
     #[tool(
+        description = "Set iOS device or Android Emulator orientation to portrait, portrait_upside_down, landscape_left, or landscape_right. Physical iOS requires a supported device; Android ADB mode disables automatic rotation and experimental Android gRPC does not support this operation."
+    )]
+    async fn device_rotate(
+        &self,
+        Parameters(parameters): Parameters<RotateParameters>,
+    ) -> CallToolResult {
+        let platform = match configured_platform() {
+            Ok(platform) => platform,
+            Err(error) => return failure(error),
+        };
+        self.session
+            .execute("rotate", Duration::from_secs(20), async {
+                self.cache.lock().await.clear();
+                match platform {
+                    Platform::Ios => {
+                        match ios_device::Target::configured() {
+                            Ok(Some(target)) => match target.rotate(parameters.orientation, self.runner.as_ref()).await {
+                                Ok(message) => return success(message),
+                                Err(error) => return failure(error),
+                            },
+                            Ok(None) => {}
+                            Err(error) => return failure(error),
+                        }
+                        match self.ios.enabled() {
+                            Ok(true) => match self.ios.rotate(parameters.orientation).await {
+                                Ok(message) => return success(message),
+                                Err(error) => return failure(error),
+                            },
+                            Ok(false) => {
+                                if let Err(error) =
+                                    self.lifecycle.ensure_running(self.runner.as_ref()).await
+                                {
+                                    return failure(error);
+                                }
+                            }
+                            Err(error) => return failure(error),
+                        }
+                    }
+                    Platform::Android => match self.android.enabled() {
+                        Ok(true) => {
+                            return failure(anyhow::anyhow!(
+                                "device_rotate is not supported by the experimental Android gRPC backend; select the ADB backend"
+                            ));
+                        }
+                        Ok(false) => {}
+                        Err(error) => return failure(error),
+                    },
+                }
+                match rotate_device(platform, parameters.orientation, self.runner.as_ref()).await {
+                    Ok(message) => success(message),
+                    Err(error) => failure(error),
+                }
+            })
+            .await
+    }
+
+    #[tool(
+        description = "Submit up to 32 validated simultaneous Android Emulator contact frames through the experimental authenticated gRPC backend. Each frame can contain up to 5 contacts with down/move/up phases; all contacts must be released in the final frame. Not supported by ADB."
+    )]
+    async fn device_multitouch(
+        &self,
+        Parameters(parameters): Parameters<MultiTouchParameters>,
+    ) -> CallToolResult {
+        if let Err(error) = parameters.validate() {
+            return failure(error);
+        }
+        if !matches!(configured_platform(), Ok(Platform::Android)) {
+            return failure(anyhow::anyhow!(
+                "device_multitouch currently requires the Android platform"
+            ));
+        }
+        let timeout = Duration::from_millis(parameters.timeout_ms.unwrap_or(10_000));
+        self.session
+            .execute("multitouch", timeout + Duration::from_millis(50), async {
+                self.cache.lock().await.clear();
+                match self.android.enabled() {
+                    Ok(true) => match self.android.multitouch(&parameters.frames).await {
+                        Ok(message) => success(message),
+                        Err(error) => failure(error),
+                    },
+                    Ok(false) => failure(anyhow::anyhow!(
+                        "device_multitouch requires the experimental Android gRPC backend; ADB cannot submit simultaneous contacts"
+                    )),
+                    Err(error) => failure(error),
+                }
+            })
+            .await
+    }
+
+    #[tool(
         description = "Repair iOS Simulator input when keyboard or touch input stops working. This restarts SpringBoard and closes running apps."
     )]
     async fn device_repair_input(&self) -> CallToolResult {
@@ -358,6 +526,15 @@ impl DeviceSimulatorMcp {
                 };
                 match platform {
                     Platform::Ios => {
+                        match ios_device::Target::configured() {
+                            Ok(Some(_)) => {
+                                return failure(anyhow::anyhow!(
+                                    "device_repair_input is only supported for iOS Simulators"
+                                ));
+                            }
+                            Ok(None) => {}
+                            Err(error) => return failure(error),
+                        }
                         match run_serve_sim(self.runner.as_ref(), &["repair-input"]).await {
                             Ok(message) => success(message),
                             Err(error) => failure(error),
@@ -385,15 +562,40 @@ impl DeviceSimulatorMcp {
         if let Err(error) = validate_step(&parameters) {
             return failure(error);
         }
+        let physical_target = if matches!(platform, Platform::Ios) {
+            match ios_device::Target::configured() {
+                Ok(target) => target,
+                Err(error) => return failure(error),
+            }
+        } else {
+            None
+        };
+        let physical_wda = physical_target
+            .as_ref()
+            .is_some_and(ios_device::Target::has_wda);
         if (parameters.accessibility
             || matches!(
                 parameters.wait_condition,
                 Some(visual_wait::Condition::ElementPresent { .. })
             ))
+            && !physical_wda
             && (!matches!(platform, Platform::Ios) || !matches!(self.ios.enabled(), Ok(true)))
         {
             return failure(anyhow::anyhow!(
                 "step accessibility/element wait requires persistent iOS; no actions were submitted"
+            ));
+        }
+        if physical_target.as_ref().is_some_and(|target| {
+            (!parameters.actions.is_empty()
+                || parameters.accessibility
+                || matches!(
+                    parameters.wait_condition,
+                    Some(visual_wait::Condition::ElementPresent { .. })
+                ))
+                && !target.has_wda()
+        }) {
+            return failure(anyhow::anyhow!(
+                "physical iPhone input/accessibility requires IOS_WDA_URL; no actions were submitted"
             ));
         }
         if parameters
@@ -498,7 +700,7 @@ impl DeviceSimulatorMcp {
                 if parameters.accessibility {
                     let snapshot = match wait_accessibility {
                         Some(snapshot) => snapshot,
-                        None => self.ios.accessibility().await?,
+                        None => self.accessibility_snapshot().await?,
                     };
                     return Ok(vec![ContentBlock::text(accessibility::project(&snapshot,
                         &parameters.accessibility_options.unwrap_or_default()))]);
@@ -529,7 +731,7 @@ impl DeviceSimulatorMcp {
     }
 
     #[tool(
-        description = "Inspect iOS accessibility on demand through the opt-in persistent serve-sim backend. Output is bounded and can be truncated; no screenshot is collected."
+        description = "Inspect a bounded accessibility tree on iOS through persistent serve-sim or physical-device WebDriverAgent, or on Android through ADB UIAutomator. Android gRPC does not expose accessibility; no screenshot is collected."
     )]
     async fn device_inspect(
         &self,
@@ -538,14 +740,33 @@ impl DeviceSimulatorMcp {
         if let Err(error) = options.validate() {
             return failure(error);
         }
+        let platform = match configured_platform() {
+            Ok(platform) => platform,
+            Err(error) => return failure(error),
+        };
         self.session
-            .execute("inspect", Duration::from_secs(15), async {
-                if !matches!(configured_platform(), Ok(Platform::Ios)) {
-                    return failure(anyhow::anyhow!(
-                        "accessibility inspection currently requires persistent iOS"
-                    ));
-                }
-                match self.ios.accessibility().await {
+            .execute("inspect", Duration::from_secs(20), async {
+                let result = match platform {
+                    Platform::Ios => match ios_device::Target::configured() {
+                        Ok(Some(target)) => target.accessibility().await,
+                        Ok(None) => match self.ios.enabled() {
+                        Ok(true) => self.ios.accessibility().await,
+                        Ok(false) => Err(anyhow::anyhow!(
+                            "iOS accessibility inspection requires the persistent serve-sim backend"
+                        )),
+                        Err(error) => Err(error),
+                        },
+                        Err(error) => Err(error),
+                    },
+                    Platform::Android => match self.android.enabled() {
+                        Ok(true) => Err(anyhow::anyhow!(
+                            "Android accessibility inspection is not supported by the experimental gRPC backend; select ADB"
+                        )),
+                        Ok(false) => inspect_android_accessibility(self.runner.as_ref()).await,
+                        Err(error) => Err(error),
+                    },
+                };
+                match result {
                     Ok(value) => success(accessibility::project(&value, &options)),
                     Err(error) => failure(error),
                 }
@@ -555,7 +776,7 @@ impl DeviceSimulatorMcp {
 }
 
 #[rmcp::tool_handler(
-    instructions = "Prefer device_step for already-known action sequences with one final capture. Do not batch actions depending on unseen UI. PNG fresh screenshots remain the default; choose JPEG/max_dimension for smaller observations, or latest_frame with persistent iOS when unknown source age is acceptable. Never automatically retry an uncertain input. Persistent backends are opt-in and require externally provisioned local services."
+    instructions = "Prefer device_step for already-known sequential actions with one final capture. Do not batch actions depending on unseen UI. Use device_multitouch only for a verified screen and the experimental authenticated Android gRPC backend; its contacts are simultaneous, not sequential. PNG fresh screenshots remain the default; choose JPEG/max_dimension for smaller observations, or latest_frame with persistent iOS when unknown source age is acceptable. Use device_rotate for explicit orientation changes. Never automatically retry an uncertain input. Persistent backends are opt-in and require externally provisioned local services."
 )]
 impl rmcp::ServerHandler for DeviceSimulatorMcp {
     async fn call_tool(
@@ -577,6 +798,13 @@ impl rmcp::ServerHandler for DeviceSimulatorMcp {
 }
 
 impl DeviceSimulatorMcp {
+    async fn accessibility_snapshot(&self) -> anyhow::Result<serde_json::Value> {
+        if let Some(target) = ios_device::Target::configured()? {
+            return target.accessibility().await;
+        }
+        self.ios.accessibility().await
+    }
+
     async fn stop_ios(&self) -> anyhow::Result<String> {
         if self.ios.enabled()? {
             self.ios.stop().await
@@ -587,11 +815,19 @@ impl DeviceSimulatorMcp {
 
     async fn tap(&self, platform: Platform, x: f64, y: f64) -> anyhow::Result<String> {
         self.cache.lock().await.clear();
+        if matches!(platform, Platform::Ios)
+            && let Some(target) = ios_device::Target::configured()?
+        {
+            return target.tap(x, y, self.runner.as_ref()).await;
+        }
         if matches!(platform, Platform::Ios) && self.ios.enabled()? {
             self.ios.tap(x, y).await
         } else if matches!(platform, Platform::Android) && self.android.enabled()? {
             self.android.tap(x, y).await
         } else {
+            if matches!(platform, Platform::Ios) {
+                self.lifecycle.ensure_running(self.runner.as_ref()).await?;
+            }
             tap_device(platform, x, y, self.runner.as_ref()).await
         }
     }
@@ -603,6 +839,16 @@ impl DeviceSimulatorMcp {
 
     async fn swipe(&self, platform: Platform, points: SwipeParameters) -> anyhow::Result<String> {
         self.cache.lock().await.clear();
+        if matches!(platform, Platform::Ios)
+            && let Some(target) = ios_device::Target::configured()?
+        {
+            return target
+                .swipe(
+                    (points.x1, points.y1, points.x2, points.y2),
+                    self.runner.as_ref(),
+                )
+                .await;
+        }
         if matches!(platform, Platform::Ios) && self.ios.enabled()? {
             self.ios
                 .swipe((points.x1, points.y1, points.x2, points.y2))
@@ -612,17 +858,28 @@ impl DeviceSimulatorMcp {
                 .swipe((points.x1, points.y1, points.x2, points.y2))
                 .await
         } else {
+            if matches!(platform, Platform::Ios) {
+                self.lifecycle.ensure_running(self.runner.as_ref()).await?;
+            }
             swipe_device(platform, points, self.runner.as_ref()).await
         }
     }
 
     async fn type_text(&self, platform: Platform, text: &str) -> anyhow::Result<String> {
         self.cache.lock().await.clear();
+        if matches!(platform, Platform::Ios)
+            && let Some(target) = ios_device::Target::configured()?
+        {
+            return target.type_text(text).await;
+        }
         if matches!(platform, Platform::Ios) && self.ios.enabled()? {
             self.ios.type_text(text).await
         } else if matches!(platform, Platform::Android) && self.android.enabled()? {
             self.android.type_text(text).await
         } else {
+            if matches!(platform, Platform::Ios) {
+                self.lifecycle.ensure_running(self.runner.as_ref()).await?;
+            }
             type_on_device(platform, text, self.runner.as_ref()).await
         }
     }
@@ -642,7 +899,19 @@ impl DeviceSimulatorMcp {
                 "Latest serve-sim frame; source age unknown, may be replayed".to_owned(),
             )
         } else {
-            if matches!(platform, Platform::Android) && self.android.enabled()? {
+            if matches!(platform, Platform::Ios)
+                && let Some(target) = ios_device::Target::configured()?
+            {
+                (
+                    target
+                        .capture(
+                            parameters.name.as_deref().unwrap_or("device"),
+                            self.runner.as_ref(),
+                        )
+                        .await?,
+                    "Captured physical iPhone via devicectl".to_owned(),
+                )
+            } else if matches!(platform, Platform::Android) && self.android.enabled()? {
                 (
                     self.android.capture().await?,
                     "Captured Android Emulator via experimental gRPC".to_owned(),
@@ -689,7 +958,7 @@ impl DeviceSimulatorMcp {
         identifier: Option<&str>,
     ) -> anyhow::Result<serde_json::Value> {
         for _ in 0..32 {
-            let value = self.ios.accessibility().await?;
+            let value = self.accessibility_snapshot().await?;
             let snapshot = compact_accessibility(value.clone());
             if element_matches(&snapshot, label, identifier)? {
                 return Ok(value);
@@ -717,9 +986,12 @@ impl DeviceSimulatorMcp {
             cache_target(platform)?;
         }
         let key = format!(
-            "{platform:?}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
+            "{platform:?}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
             parameters.latest_frame,
             std::env::var("IOS_SIMULATOR_UDID").unwrap_or_default(),
+            std::env::var("DEVICE_IOS_TARGET").unwrap_or_default(),
+            std::env::var("IOS_DEVICE_UDID").unwrap_or_default(),
+            std::env::var("IOS_WDA_URL").unwrap_or_default(),
             std::env::var("ANDROID_SERIAL").unwrap_or_default(),
             std::env::var("DEVICE_ANDROID_BACKEND").unwrap_or_default(),
             std::env::var("DEVICE_IOS_BACKEND").unwrap_or_default(),
@@ -784,7 +1056,12 @@ fn validate_text(text: &str) -> anyhow::Result<()> {
 
 fn cache_target(platform: Platform) -> anyhow::Result<()> {
     let explicit = match platform {
-        Platform::Ios => std::env::var("IOS_SIMULATOR_UDID").is_ok_and(|value| !value.is_empty()),
+        Platform::Ios => ios_device::Target::configured()
+            .map(|target| {
+                target.is_some()
+                    || std::env::var("IOS_SIMULATOR_UDID").is_ok_and(|value| !value.is_empty())
+            })
+            .unwrap_or(false),
         Platform::Android if std::env::var("DEVICE_ANDROID_BACKEND").as_deref() == Ok("grpc") => {
             std::env::var("ANDROID_GRPC_ENDPOINT").is_ok_and(|value| !value.is_empty())
         }
@@ -949,15 +1226,16 @@ mod tests {
         sync::{Arc, Mutex},
     };
 
+    use crate::android_grpc;
     use async_trait::async_trait;
     use rmcp::handler::server::wrapper::Parameters;
 
     use super::{
-        CaptureParameters, CommandOutput, CommandRunner, DeviceSimulatorMcp, Platform,
-        SwipeParameters, TapParameters, TypeParameters, actionable_command_error,
-        actionable_device_failure, command_output, escape_android_text, gesture_payload,
-        parse_display_size, parse_platform, status_device, swipe_device, tap_device,
-        type_on_device, validate_coordinates, validate_screenshot_name,
+        CaptureParameters, CommandOutput, CommandRunner, DeviceSimulatorMcp, MultiTouchParameters,
+        Orientation, Platform, RotateParameters, SwipeParameters, TapParameters, TypeParameters,
+        actionable_command_error, actionable_device_failure, command_output, escape_android_text,
+        gesture_payload, parse_display_size, parse_platform, rotate_device, status_device,
+        swipe_device, tap_device, type_on_device, validate_coordinates, validate_screenshot_name,
     };
 
     static DEVICE_PLATFORM_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -983,7 +1261,12 @@ mod tests {
 
     #[async_trait]
     impl CommandRunner for FakeCommandRunner {
-        async fn run(&self, command: &str, arguments: &[String]) -> anyhow::Result<CommandOutput> {
+        async fn run_with_timeout(
+            &self,
+            command: &str,
+            arguments: &[String],
+            _command_timeout: std::time::Duration,
+        ) -> anyhow::Result<CommandOutput> {
             self.calls
                 .lock()
                 .unwrap()
@@ -1821,6 +2104,7 @@ mod tests {
         let _environment_lock = DEVICE_PLATFORM_LOCK.lock().await;
         unsafe {
             std::env::set_var("DEVICE_PLATFORM", "android");
+            std::env::set_var("DEVICE_ANDROID_BACKEND", "adb");
         }
         let runner = Arc::new(FakeCommandRunner::default());
         let service = DeviceSimulatorMcp {
@@ -1834,11 +2118,414 @@ mod tests {
             serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
         assert_eq!(value["backend"], "adb");
         assert_eq!(value["availability_probed"], false);
+        assert_eq!(value["controls"]["orientation"], true);
+        assert_eq!(value["controls"]["multitouch"], false);
+        assert_eq!(value["observations"]["accessibility"], true);
+        assert_eq!(value["observations"]["step_accessibility"], false);
         assert_eq!(value["wait_conditions"]["element_present"], false);
         assert_eq!(value["wait_conditions"]["visual_stability"], true);
         assert!(runner.calls().is_empty());
         unsafe {
             std::env::remove_var("DEVICE_PLATFORM");
+            std::env::remove_var("DEVICE_ANDROID_BACKEND");
+        }
+    }
+
+    #[tokio::test]
+    async fn rejects_physical_iphone_steps_without_webdriveragent_before_device_io() {
+        let _environment_lock = DEVICE_PLATFORM_LOCK.lock().await;
+        unsafe {
+            std::env::set_var("DEVICE_PLATFORM", "ios");
+            std::env::set_var("DEVICE_IOS_TARGET", "device");
+            std::env::set_var("IOS_DEVICE_UDID", "physical-device-test");
+            std::env::remove_var("IOS_WDA_URL");
+        }
+        let runner = Arc::new(FakeCommandRunner::default());
+        let service = DeviceSimulatorMcp {
+            runner: runner.clone(),
+            ..Default::default()
+        };
+
+        let result = service
+            .device_step(Parameters(super::StepParameters {
+                actions: vec![super::Action::Tap { x: 0.5, y: 0.5 }],
+                ..Default::default()
+            }))
+            .await;
+
+        assert_eq!(result.is_error, Some(true));
+        assert!(
+            serde_json::to_string(&result)
+                .unwrap()
+                .contains("IOS_WDA_URL")
+        );
+        assert!(runner.calls().is_empty());
+        unsafe {
+            std::env::remove_var("DEVICE_PLATFORM");
+            std::env::remove_var("DEVICE_IOS_TARGET");
+            std::env::remove_var("IOS_DEVICE_UDID");
+        }
+    }
+
+    #[tokio::test]
+    async fn inspects_android_uiautomator_tree_through_serial_scoped_adb() {
+        let _environment_lock = DEVICE_PLATFORM_LOCK.lock().await;
+        unsafe {
+            std::env::set_var("DEVICE_PLATFORM", "android");
+            std::env::set_var("DEVICE_ANDROID_BACKEND", "adb");
+            std::env::set_var("ANDROID_SERIAL", "emulator-5554");
+        }
+        let tree = br#"<hierarchy><node class="root"><node text="Continue" resource-id="app:id/continue" class="Button" bounds="[0,0][200,80]" enabled="true"/></node></hierarchy>"#;
+        let runner = Arc::new(FakeCommandRunner::with_outputs(vec![successful_bytes(
+            tree,
+        )]));
+        let service = DeviceSimulatorMcp {
+            runner: runner.clone(),
+            ..Default::default()
+        };
+
+        let result = service
+            .device_inspect(Parameters(crate::accessibility::Options {
+                identifier: Some("app:id/continue".to_owned()),
+                ..Default::default()
+            }))
+            .await;
+
+        assert_eq!(result.is_error, Some(false));
+        let text = serde_json::to_value(result).unwrap()["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let projected: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(projected["elements"].as_array().unwrap().len(), 1);
+        assert_eq!(projected["elements"][0]["label"], "Continue");
+        assert_eq!(runner.calls().len(), 1);
+        assert_eq!(runner.calls()[0].0, "adb");
+        assert_eq!(runner.calls()[0].1[0..3], ["-s", "emulator-5554", "shell"]);
+        assert!(runner.calls()[0].1[5].contains("uiautomator dump --compressed"));
+        assert!(runner.calls()[0].1[5].contains("rm -f"));
+        unsafe {
+            std::env::remove_var("DEVICE_PLATFORM");
+            std::env::remove_var("DEVICE_ANDROID_BACKEND");
+            std::env::remove_var("ANDROID_SERIAL");
+        }
+    }
+
+    #[tokio::test]
+    async fn rotates_android_with_serial_scoped_adb_and_disables_auto_rotation() {
+        let _environment_lock = DEVICE_PLATFORM_LOCK.lock().await;
+        unsafe {
+            std::env::set_var("DEVICE_PLATFORM", "android");
+            std::env::set_var("DEVICE_ANDROID_BACKEND", "adb");
+            std::env::set_var("ANDROID_SERIAL", "emulator-5554");
+        }
+        let runner = Arc::new(FakeCommandRunner::with_outputs(vec![
+            successful_output(""),
+            successful_output(""),
+        ]));
+        let service = DeviceSimulatorMcp {
+            runner: runner.clone(),
+            ..Default::default()
+        };
+
+        let result = service
+            .device_rotate(Parameters(RotateParameters {
+                orientation: Orientation::LandscapeRight,
+            }))
+            .await;
+
+        assert_eq!(result.is_error, Some(false));
+        assert!(
+            serde_json::to_string(&result)
+                .unwrap()
+                .contains("automatic rotation is disabled")
+        );
+        assert_eq!(
+            runner.calls(),
+            vec![
+                (
+                    "adb".to_owned(),
+                    vec![
+                        "-s".to_owned(),
+                        "emulator-5554".to_owned(),
+                        "shell".to_owned(),
+                        "settings".to_owned(),
+                        "put".to_owned(),
+                        "system".to_owned(),
+                        "accelerometer_rotation".to_owned(),
+                        "0".to_owned(),
+                    ],
+                ),
+                (
+                    "adb".to_owned(),
+                    vec![
+                        "-s".to_owned(),
+                        "emulator-5554".to_owned(),
+                        "shell".to_owned(),
+                        "settings".to_owned(),
+                        "put".to_owned(),
+                        "system".to_owned(),
+                        "user_rotation".to_owned(),
+                        "3".to_owned(),
+                    ],
+                ),
+            ]
+        );
+        unsafe {
+            std::env::remove_var("DEVICE_PLATFORM");
+            std::env::remove_var("DEVICE_ANDROID_BACKEND");
+            std::env::remove_var("ANDROID_SERIAL");
+        }
+    }
+
+    #[tokio::test]
+    async fn maps_each_orientation_to_android_rotation_settings() {
+        let _environment_lock = DEVICE_PLATFORM_LOCK.lock().await;
+        unsafe {
+            std::env::set_var("ANDROID_SERIAL", "emulator-5554");
+        }
+        let runner =
+            FakeCommandRunner::with_outputs((0..8).map(|_| successful_output("")).collect());
+        for (orientation, expected) in [
+            (Orientation::Portrait, "0"),
+            (Orientation::PortraitUpsideDown, "2"),
+            (Orientation::LandscapeLeft, "1"),
+            (Orientation::LandscapeRight, "3"),
+        ] {
+            rotate_device(Platform::Android, orientation, &runner)
+                .await
+                .unwrap();
+            assert_eq!(
+                runner.calls().last().unwrap().1.last().map(String::as_str),
+                Some(expected)
+            );
+        }
+        unsafe {
+            std::env::remove_var("ANDROID_SERIAL");
+        }
+    }
+
+    #[tokio::test]
+    async fn rotates_ios_through_the_pinned_serve_sim_command() {
+        let _environment_lock = DEVICE_PLATFORM_LOCK.lock().await;
+        unsafe {
+            std::env::set_var("IOS_SIMULATOR_UDID", "11111111-1111-4111-8111-111111111111");
+            std::env::set_var("SERVE_SIM_BINARY", "serve-sim-test");
+        }
+        let runner = FakeCommandRunner::with_outputs(vec![successful_output("Rotated")]);
+
+        rotate_device(Platform::Ios, Orientation::LandscapeLeft, &runner)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            runner.calls(),
+            vec![(
+                "serve-sim-test".to_owned(),
+                vec![
+                    "rotate".to_owned(),
+                    "--device".to_owned(),
+                    "11111111-1111-4111-8111-111111111111".to_owned(),
+                    "landscape_left".to_owned(),
+                ],
+            )]
+        );
+        unsafe {
+            std::env::remove_var("IOS_SIMULATOR_UDID");
+            std::env::remove_var("SERVE_SIM_BINARY");
+        }
+    }
+
+    #[tokio::test]
+    async fn does_not_fall_back_to_adb_rotation_when_android_grpc_is_enabled() {
+        let _environment_lock = DEVICE_PLATFORM_LOCK.lock().await;
+        unsafe {
+            std::env::set_var("DEVICE_PLATFORM", "android");
+            std::env::set_var("DEVICE_ANDROID_BACKEND", "grpc");
+            std::env::set_var("ANDROID_GRPC_ENDPOINT", "http://127.0.0.1:8554");
+            std::env::set_var("ANDROID_GRPC_TOKEN_FILE", "/path/not-read-by-this-test");
+        }
+        let runner = Arc::new(FakeCommandRunner::default());
+        let service = DeviceSimulatorMcp {
+            runner: runner.clone(),
+            ..Default::default()
+        };
+
+        let result = service
+            .device_rotate(Parameters(RotateParameters {
+                orientation: Orientation::Portrait,
+            }))
+            .await;
+
+        assert_eq!(result.is_error, Some(true));
+        assert!(
+            serde_json::to_string(&result)
+                .unwrap()
+                .contains("not supported by the experimental Android gRPC backend")
+        );
+        assert!(runner.calls().is_empty());
+        let capabilities = service.device_capabilities().await;
+        let capabilities: serde_json::Value = serde_json::from_str(
+            serde_json::to_value(capabilities).unwrap()["content"][0]["text"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(capabilities["controls"]["orientation"], false);
+        assert_eq!(capabilities["controls"]["multitouch"], true);
+        assert_eq!(capabilities["observations"]["accessibility"], false);
+
+        let inspect = service
+            .device_inspect(Parameters(crate::accessibility::Options::default()))
+            .await;
+        assert_eq!(inspect.is_error, Some(true));
+        assert!(
+            serde_json::to_string(&inspect)
+                .unwrap()
+                .contains("not supported by the experimental gRPC backend")
+        );
+        assert!(runner.calls().is_empty());
+        unsafe {
+            std::env::remove_var("DEVICE_PLATFORM");
+            std::env::remove_var("DEVICE_ANDROID_BACKEND");
+            std::env::remove_var("ANDROID_GRPC_ENDPOINT");
+            std::env::remove_var("ANDROID_GRPC_TOKEN_FILE");
+        }
+    }
+
+    #[test]
+    fn validates_simultaneous_multitouch_contact_lifecycles_before_io() {
+        let frames = vec![
+            android_grpc::MultiTouchFrame {
+                delay_ms: Some(40),
+                contacts: vec![
+                    android_grpc::MultiTouchContact {
+                        id: 0,
+                        x: 0.1,
+                        y: 0.8,
+                        phase: android_grpc::ContactPhase::Down,
+                    },
+                    android_grpc::MultiTouchContact {
+                        id: 1,
+                        x: 0.8,
+                        y: 0.7,
+                        phase: android_grpc::ContactPhase::Down,
+                    },
+                ],
+            },
+            android_grpc::MultiTouchFrame {
+                delay_ms: Some(40),
+                contacts: vec![
+                    android_grpc::MultiTouchContact {
+                        id: 0,
+                        x: 0.2,
+                        y: 0.8,
+                        phase: android_grpc::ContactPhase::Move,
+                    },
+                    android_grpc::MultiTouchContact {
+                        id: 1,
+                        x: 0.8,
+                        y: 0.6,
+                        phase: android_grpc::ContactPhase::Move,
+                    },
+                ],
+            },
+            android_grpc::MultiTouchFrame {
+                delay_ms: Some(0),
+                contacts: vec![
+                    android_grpc::MultiTouchContact {
+                        id: 0,
+                        x: 0.2,
+                        y: 0.8,
+                        phase: android_grpc::ContactPhase::Move,
+                    },
+                    android_grpc::MultiTouchContact {
+                        id: 1,
+                        x: 0.8,
+                        y: 0.6,
+                        phase: android_grpc::ContactPhase::Up,
+                    },
+                ],
+            },
+            android_grpc::MultiTouchFrame {
+                delay_ms: None,
+                contacts: vec![android_grpc::MultiTouchContact {
+                    id: 0,
+                    x: 0.2,
+                    y: 0.8,
+                    phase: android_grpc::ContactPhase::Up,
+                }],
+            },
+        ];
+        assert!(
+            MultiTouchParameters {
+                frames: frames.clone(),
+                timeout_ms: Some(1000),
+            }
+            .validate()
+            .is_ok()
+        );
+
+        let mut invalid = frames;
+        invalid[1].contacts[0].phase = android_grpc::ContactPhase::Up;
+        assert!(
+            MultiTouchParameters {
+                frames: invalid,
+                timeout_ms: None,
+            }
+            .validate()
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn reports_multitouch_unsupported_in_default_android_adb_mode() {
+        let _environment_lock = DEVICE_PLATFORM_LOCK.lock().await;
+        unsafe {
+            std::env::set_var("DEVICE_PLATFORM", "android");
+            std::env::set_var("DEVICE_ANDROID_BACKEND", "adb");
+        }
+        let runner = Arc::new(FakeCommandRunner::default());
+        let service = DeviceSimulatorMcp {
+            runner: runner.clone(),
+            ..Default::default()
+        };
+        let result = service
+            .device_multitouch(Parameters(MultiTouchParameters {
+                frames: vec![
+                    android_grpc::MultiTouchFrame {
+                        delay_ms: Some(0),
+                        contacts: vec![android_grpc::MultiTouchContact {
+                            id: 0,
+                            x: 0.5,
+                            y: 0.5,
+                            phase: android_grpc::ContactPhase::Down,
+                        }],
+                    },
+                    android_grpc::MultiTouchFrame {
+                        delay_ms: None,
+                        contacts: vec![android_grpc::MultiTouchContact {
+                            id: 0,
+                            x: 0.5,
+                            y: 0.5,
+                            phase: android_grpc::ContactPhase::Up,
+                        }],
+                    },
+                ],
+                timeout_ms: None,
+            }))
+            .await;
+
+        assert_eq!(result.is_error, Some(true));
+        assert!(
+            serde_json::to_string(&result)
+                .unwrap()
+                .contains("ADB cannot submit simultaneous contacts")
+        );
+        assert!(runner.calls().is_empty());
+        unsafe {
+            std::env::remove_var("DEVICE_PLATFORM");
+            std::env::remove_var("DEVICE_ANDROID_BACKEND");
         }
     }
 
@@ -1877,7 +2564,12 @@ mod tests {
         struct FailedCapture(std::sync::Mutex<Option<std::path::PathBuf>>);
         #[async_trait]
         impl CommandRunner for FailedCapture {
-            async fn run(&self, _: &str, arguments: &[String]) -> anyhow::Result<CommandOutput> {
+            async fn run_with_timeout(
+                &self,
+                _: &str,
+                arguments: &[String],
+                _command_timeout: std::time::Duration,
+            ) -> anyhow::Result<CommandOutput> {
                 *self.0.lock().unwrap() = arguments.last().map(std::path::PathBuf::from);
                 Err(anyhow::anyhow!("capture failed"))
             }

@@ -138,6 +138,8 @@ fn lists_legacy_and_new_tools_in_one_persistent_session() {
         "device_tap",
         "device_swipe",
         "device_type",
+        "device_rotate",
+        "device_multitouch",
         "device_capture",
         "device_repair_input",
         "device_step",
@@ -155,6 +157,16 @@ fn lists_legacy_and_new_tools_in_one_persistent_session() {
         );
         assert_eq!(response["result"]["isError"], true);
     }
+    let response = client.request(
+        "tools/call",
+        serde_json::json!({"name":"device_rotate","arguments":{"orientation":"diagonal"}}),
+    );
+    assert_eq!(response["result"]["isError"], true);
+    let response = client.request(
+        "tools/call",
+        serde_json::json!({"name":"device_multitouch","arguments":{"frames":[]}}),
+    );
+    assert_eq!(response["result"]["isError"], true);
     let response = client.request(
         "tools/call",
         serde_json::json!({"name":"device_inspect",
@@ -252,6 +264,25 @@ fn fresh_visual_waits_and_cache_work_through_persistent_stdio() {
 }
 
 #[cfg(unix)]
+fn process_is_running(pid: i32) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
+            return false;
+        };
+        let Some((_, fields)) = stat.rsplit_once(") ") else {
+            return true;
+        };
+        !fields.starts_with('Z')
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        // SAFETY: signal 0 checks only existence of this test's own process.
+        unsafe { libc::kill(pid, 0) == 0 }
+    }
+}
+
+#[cfg(unix)]
 #[test]
 fn protocol_cancellation_kills_input_process_and_releases_session() {
     use std::os::unix::fs::PermissionsExt;
@@ -289,8 +320,7 @@ fn protocol_cancellation_kills_input_process_and_releases_session() {
     assert!(response.get("result").is_some());
     // Reaping can complete asynchronously after kill_on_drop.
     loop {
-        // SAFETY: signal 0 checks only existence of this test's own process.
-        if unsafe { libc::kill(pid, 0) } != 0 {
+        if !process_is_running(pid) {
             break;
         }
         assert!(

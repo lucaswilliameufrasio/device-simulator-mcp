@@ -23,7 +23,8 @@ Keep public tool schemas, transport defaults and device behavior unchanged.
 
 **Source:** Approved ai-memory plan in
 `ursoc/device-simulator-mcp/plans/persistent-device-performance.md`.
-Arandu remains unavailable; mirror this local record when access returns.
+Recorded while Arandu was unavailable; mirrored on 2026-10-06 to Arandu page
+`01a10f82-5903-7a21-bd7c-9bcd97200961`.
 
 ## Open Questions
 

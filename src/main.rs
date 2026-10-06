@@ -1,9 +1,11 @@
 mod accessibility;
+mod android_accessibility;
 mod android_grpc;
 mod cli;
 mod frame_cache;
 mod install_mcp;
 mod ios;
+mod ios_device;
 mod ios_lifecycle;
 mod mcp;
 mod observation;

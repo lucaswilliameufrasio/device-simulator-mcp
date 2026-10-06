@@ -3,7 +3,40 @@ use crate::{
     ios,
     process::{CommandOutput, CommandRunner},
 };
-use std::{io, time::Duration};
+use std::{
+    io,
+    sync::atomic::{AtomicU64, Ordering},
+    time::Duration,
+};
+
+#[derive(Clone, Copy, Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Orientation {
+    Portrait,
+    PortraitUpsideDown,
+    LandscapeLeft,
+    LandscapeRight,
+}
+
+impl Orientation {
+    pub(crate) fn serve_sim_value(self) -> &'static str {
+        match self {
+            Self::Portrait => "portrait",
+            Self::PortraitUpsideDown => "portrait_upside_down",
+            Self::LandscapeLeft => "landscape_left",
+            Self::LandscapeRight => "landscape_right",
+        }
+    }
+
+    fn android_rotation(self) -> u8 {
+        match self {
+            Self::Portrait => 0,
+            Self::LandscapeLeft => 1,
+            Self::PortraitUpsideDown => 2,
+            Self::LandscapeRight => 3,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Platform {
@@ -88,6 +121,22 @@ pub(crate) async fn capture_device(
     }
 }
 
+pub(crate) async fn inspect_android_accessibility(
+    runner: &dyn CommandRunner,
+) -> anyhow::Result<serde_json::Value> {
+    static NEXT_DUMP: AtomicU64 = AtomicU64::new(0);
+    let remote_path = format!(
+        "/sdcard/device-simulator-mcp-{}-{}.xml",
+        std::process::id(),
+        NEXT_DUMP.fetch_add(1, Ordering::Relaxed)
+    );
+    let script = format!(
+        "path={remote_path}; trap 'rm -f \"$path\" >/dev/null 2>&1' EXIT HUP INT TERM; uiautomator dump --compressed \"$path\" >/dev/null 2>&1 || exit $?; cat \"$path\""
+    );
+    let xml = run_adb_bytes(runner, &["shell", "sh", "-c", &script]).await?;
+    crate::android_accessibility::parse(&xml)
+}
+
 pub(crate) async fn tap_device(
     platform: Platform,
     x: f64,
@@ -147,6 +196,47 @@ pub(crate) async fn type_on_device(
                 &["shell", "input", "text", &escape_android_text(text)],
             )
             .await
+        }
+    }
+}
+
+pub(crate) async fn rotate_device(
+    platform: Platform,
+    orientation: Orientation,
+    runner: &dyn CommandRunner,
+) -> anyhow::Result<String> {
+    match platform {
+        Platform::Ios => run_serve_sim(runner, &["rotate", orientation.serve_sim_value()]).await,
+        Platform::Android => {
+            let rotation = orientation.android_rotation().to_string();
+            run_adb(
+                runner,
+                &[
+                    "shell",
+                    "settings",
+                    "put",
+                    "system",
+                    "accelerometer_rotation",
+                    "0",
+                ],
+            )
+            .await?;
+            run_adb(
+                runner,
+                &[
+                    "shell",
+                    "settings",
+                    "put",
+                    "system",
+                    "user_rotation",
+                    &rotation,
+                ],
+            )
+            .await?;
+            Ok(format!(
+                "Android Emulator rotated to {}; automatic rotation is disabled",
+                orientation.serve_sim_value()
+            ))
         }
     }
 }

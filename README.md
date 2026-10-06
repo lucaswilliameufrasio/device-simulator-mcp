@@ -96,10 +96,15 @@ Set `ANDROID_SERIAL` when more than one Android device is available.
 - `device_tap`: tap a normalized coordinate between `0` and `1`.
 - `device_swipe`: swipe between normalized coordinates.
 - `device_type`: type into the focused control.
+- `device_rotate`: set one of the four explicit orientations. Android ADB mode
+  disables automatic rotation; experimental Android gRPC mode does not support
+  this operation.
 - `device_step`: execute a bounded, known sequence of actions with an optional
   final screenshot in one MCP call.
-- `device_inspect`: inspect a bounded accessibility snapshot on demand through
-  the opt-in persistent iOS backend.
+- `device_inspect`: inspect a bounded accessibility snapshot through persistent
+  iOS or Android ADB UIAutomator. Password values are redacted.
+- `device_multitouch`: submit simultaneous Android Emulator contacts through the
+  experimental authenticated gRPC backend. ADB does not support this operation.
 - `device_repair_input`: repair iOS Simulator input services. This restarts
   SpringBoard and closes running apps; use only when input is broken.
 
@@ -107,6 +112,13 @@ The server does not build, install, launch, or modify applications. The
 explicit iOS input-repair tool is an exception to normal device interaction:
 it restarts SpringBoard and closes open apps. Everything runs locally and
 screenshots are returned directly to the MCP host.
+
+`device_multitouch` sends each frame's contacts in one Emulator Controller RPC.
+Frames use `down`, `move`, and `up` phases with stable contact IDs; every contact
+must be released in the final frame. For example, two contacts can move together
+and then be released together. The operation is available only with the
+experimental authenticated Android gRPC backend; ADB mode reports it as
+unsupported rather than converting it to sequential gestures.
 
 ## Faster agent loops
 
@@ -178,6 +190,30 @@ retried. A backend submission is not acknowledgement of application rendering.
 - Cancellation terminates subprocesses; Unix additionally terminates their
   process groups. Persistent gestures attempt bounded release of held contacts
   or keys on cancellation. Results can still be uncertain: never blindly retry.
+
+### Physical iOS device backend (opt-in)
+
+Physical iPhones are selected explicitly; the default remains the Simulator.
+`devicectl` provides device readiness, screenshots and orientation. Touch, swipe,
+typing and accessibility inspection require a separately provisioned,
+signed WebDriverAgent service listening on loopback.
+
+```json
+{
+  "DEVICE_PLATFORM": "ios",
+  "DEVICE_IOS_TARGET": "device",
+  "IOS_DEVICE_UDID": "<connected iPhone UDID>",
+  "IOS_WDA_URL": "http://127.0.0.1:8100"
+}
+```
+
+`IOS_WDA_URL` is optional. Without it, capture and orientation remain available;
+input and accessibility operations report that WDA is required. `device_start`
+requests device details through Xcode's `devicectl`; the iPhone must be paired,
+trusted and reachable for device operations. `device_stop` does not
+stop the iPhone or an externally managed WDA process. `device_capabilities`
+reports which operations are configured. The MCP does not install, sign, or
+launch apps or WebDriverAgent on the device.
 
 ### Persistent iOS backend (opt-in)
 
@@ -300,6 +336,12 @@ the parent directory. No pixels are printed. Idle measurements report CPU-time
 delta and RSS for the MCP process only, **not Simulator/Emulator or external
 backend resources**. Small local samples are not a universal performance SLA.
 The CPU counter is coarse: a zero measured delta does not prove zero CPU usage.
+
+Run all script fixtures (including the isolated offline shell installer tests)
+with `python3 -m unittest discover -s scripts -p 'test_*.py'`. Installer fixtures
+cover release target selection, checksum enforcement, cleanup and preservation
+of existing installs on failure. They do not download GitHub assets or validate
+foreign-platform binaries; see `docs/features/installer-validation.md`.
 
 ## Troubleshooting
 
