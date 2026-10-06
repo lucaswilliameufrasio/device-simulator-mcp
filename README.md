@@ -280,6 +280,27 @@ PNG from scaled or cached frames. `RUST_LOG=device_simulator_mcp=debug` enables
 redacted operation/process duration and byte-count metrics on stderr; dependency
 MCP/HTTP traces are filtered out even if a verbose logging directive is supplied.
 
+For an equivalent read-only comparison with direct CLI, use an explicit target
+and **default fresh full-resolution PNG** capture arguments:
+
+```bash
+IOS_SIMULATOR_UDID=SIMULATOR_UDID python3 scripts/benchmark.py --platform ios \
+  --compare-cli --samples 20 --idle-seconds 5
+ANDROID_SERIAL=emulator-5554 python3 scripts/benchmark.py --platform android \
+  --compare-cli --samples 20 --idle-seconds 5
+python3 -m unittest discover -s scripts -p 'test_benchmark*.py'
+```
+
+The comparison alternates CLI-first/MCP-first capture pairs. It refuses resize,
+JPEG/cache/latest-frame arguments and Android gRPC, avoiding non-equivalent
+speed claims. CLI results report raw PNG bytes; MCP reports JSON response bytes
+including base64, protocol encoding/delivery and client JSON decoding. Direct iOS
+capture uses a unique temporary PNG and deletes it; `--temporary-root` can select
+the parent directory. No pixels are printed. Idle measurements report CPU-time
+delta and RSS for the MCP process only, **not Simulator/Emulator or external
+backend resources**. Small local samples are not a universal performance SLA.
+The CPU counter is coarse: a zero measured delta does not prove zero CPU usage.
+
 ## Troubleshooting
 
 If a tool reports that `adb` was not found, install Android SDK

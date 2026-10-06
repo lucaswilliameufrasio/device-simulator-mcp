@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Read-only latency benchmark using one persistent MCP connection.
 
-Only status and screenshots are requested. Screenshots are discarded, never
-written to disk or printed. Run before/after changes on the same idle device.
+Only read-only observations are requested. Images are never printed; direct
+iOS CLI comparison uses uniquely named, automatically deleted temporary PNGs.
+Run before/after changes on the same idle device.
 """
 
 import argparse
@@ -14,6 +15,8 @@ import statistics
 import subprocess
 import threading
 import time
+
+from benchmark_support import direct_capture, idle_usage, validate_comparison
 
 
 def percentile(values, fraction):
@@ -32,11 +35,21 @@ def main():
     parser.add_argument("--step", action="store_true", help="Also benchmark a capture-only device_step (no input)")
     parser.add_argument("--step-wait", choices=["visual_stability"], help="Use fresh visual stability for capture-only steps")
     parser.add_argument("--lifecycle", action="store_true", help="Start inspection first and stop only MCP-owned resources afterward")
+    parser.add_argument("--compare-cli", action="store_true", help="Pair default fresh PNG MCP capture with direct CLI capture")
+    parser.add_argument("--temporary-root", help="Directory for unique, auto-cleaned direct iOS capture files")
+    parser.add_argument("--idle-seconds", type=float, default=0, help="Measure MCP-only idle CPU/RSS after observations (0 disables, 1..30 seconds)")
     args = parser.parse_args()
-    if args.samples < 1 or args.timeout <= 0:
+    if args.samples < 1 or not math.isfinite(args.timeout) or args.timeout <= 0:
         parser.error("samples and timeout must be positive")
     capture_arguments = json.loads(args.capture_arguments)
     environment = dict(os.environ, DEVICE_PLATFORM=args.platform)
+    if args.idle_seconds != 0 and not 1 <= args.idle_seconds <= 30:
+        parser.error("idle-seconds must be 0 or between 1 and 30")
+    if args.compare_cli:
+        try:
+            validate_comparison(args.platform, capture_arguments, environment)
+        except ValueError as error:
+            parser.error(str(error))
     messages = queue.Queue()
     child = subprocess.Popen(
         [args.binary], env=environment, stdin=subprocess.PIPE,
@@ -100,13 +113,27 @@ def main():
             durations = []
             sizes = []
             errors = 0
-            for _ in range(args.samples):
+            cli_durations = []
+            cli_sizes = []
+
+            def measure_cli():
+                started = time.monotonic()
+                size = direct_capture(args.platform, environment, args.timeout, args.temporary_root)
+                cli_durations.append((time.monotonic() - started) * 1000)
+                cli_sizes.append(size)
+
+            for sample in range(args.samples):
+                compare = args.compare_cli and tool == "device_capture"
+                if compare and sample % 2 == 0:
+                    measure_cli()
                 started = time.monotonic()
                 result = request("tools/call", {"name": tool, "arguments": arguments})
                 durations.append((time.monotonic() - started) * 1000)
                 sizes.append(len(json.dumps(result).encode()))
                 errors += bool(result.get("isError"))
                 del result
+                if compare and sample % 2 == 1:
+                    measure_cli()
             print(json.dumps({
                 "platform": args.platform, "tool": tool,
                 "samples": args.samples, "errors": errors,
@@ -117,6 +144,19 @@ def main():
             }))
             if errors:
                 raise RuntimeError(f"{tool} failed {errors} times; timings are not successful-operation measurements")
+            if cli_durations:
+                print(json.dumps({"platform": args.platform, "tool": "direct_cli_capture",
+                    "samples": args.samples, "comparison": "paired_fresh_full_resolution_png",
+                    "order": "alternating_cli_first_mcp_first", "errors": 0,
+                    "first_ms": round(cli_durations[0], 2),
+                    "p50_ms": round(statistics.median(cli_durations), 2),
+                    "p95_ms": round(percentile(cli_durations, 0.95), 2),
+                    "mean_raw_png_bytes": round(statistics.mean(cli_sizes)),
+                    "median_mcp_minus_cli_ms": round(statistics.median([
+                        mcp - cli for mcp, cli in zip(durations, cli_durations)
+                    ]), 2)}))
+        if args.idle_seconds:
+            print(json.dumps(idle_usage(child.pid, args.idle_seconds)))
     finally:
         try:
             if args.lifecycle and child.poll() is None:
