@@ -110,6 +110,11 @@ screenshots are returned directly to the MCP host.
 
 ## Faster agent loops
 
+Use `device_capabilities` to discover configured backend support and limits
+without device I/O. The response explicitly does not probe runtime availability;
+use status/start for readiness. Capability output does not include endpoints or
+credentials, and Android gRPC is marked experimental.
+
 Prefer `device_step` when the actions are already known. Do not batch actions
 that depend on UI you have not observed. All arguments are validated first;
 execution stops at the first failure and reports the number of completed

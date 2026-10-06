@@ -142,6 +142,7 @@ fn lists_legacy_and_new_tools_in_one_persistent_session() {
         "device_repair_input",
         "device_step",
         "device_inspect",
+        "device_capabilities",
     ] {
         assert!(tools.iter().any(|tool| tool["name"] == name));
     }
@@ -165,6 +166,15 @@ fn lists_legacy_and_new_tools_in_one_persistent_session() {
             .to_string()
             .contains("max_elements must be between")
     );
+    let response = client.request(
+        "tools/call",
+        serde_json::json!({"name":"device_capabilities","arguments":{}}),
+    );
+    assert_eq!(response["result"]["isError"], false);
+    let capabilities: serde_json::Value =
+        serde_json::from_str(response["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(capabilities["backend"], "adb");
+    assert_eq!(capabilities["availability_probed"], false);
 }
 
 #[cfg(unix)]

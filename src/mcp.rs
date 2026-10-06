@@ -3,18 +3,27 @@ use crate::{
     visual_wait,
 };
 
-use std::{io, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
+use crate::platform::{
+    Platform, capture_device, configured_platform, run_serve_sim, start_device, status_device,
+    tap_device, type_on_device,
+};
+#[cfg(test)]
+use crate::{
+    platform::{
+        actionable_command_error, actionable_device_failure, command_output, escape_android_text,
+        gesture_payload, parse_display_size, parse_platform,
+    },
+    process::CommandOutput,
+};
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64_STANDARD};
-use process::{CommandOutput, CommandRunner, ProcessCommandRunner};
+use process::{CommandRunner, ProcessCommandRunner};
 use rmcp::{
     handler::server::wrapper::Parameters,
     model::{CallToolResult, ContentBlock},
     schemars, tool, tool_router,
 };
-use tokio::time::timeout;
-
-const PREVIEW_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Default, serde::Deserialize, schemars::JsonSchema)]
 struct CaptureParameters {
@@ -96,12 +105,6 @@ struct StepParameters {
     accessibility_options: Option<accessibility::Options>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Platform {
-    Ios,
-    Android,
-}
-
 #[derive(Clone)]
 pub(crate) struct DeviceSimulatorMcp {
     runner: Arc<dyn CommandRunner>,
@@ -127,6 +130,43 @@ impl Default for DeviceSimulatorMcp {
 
 #[tool_router]
 impl DeviceSimulatorMcp {
+    #[tool(
+        description = "Discover the configured backend's supported observations, wait conditions and operation limits without device I/O. This does not probe runtime availability; use device_status/start to verify readiness."
+    )]
+    async fn device_capabilities(&self) -> CallToolResult {
+        let platform = match configured_platform() {
+            Ok(platform) => platform,
+            Err(error) => return failure(error),
+        };
+        let persistent = match platform {
+            Platform::Ios => self.ios.enabled(),
+            Platform::Android => self.android.enabled(),
+        };
+        let persistent = match persistent {
+            Ok(enabled) => enabled,
+            Err(error) => return failure(error),
+        };
+        let accessibility = matches!(platform, Platform::Ios) && persistent;
+        let backend = match (platform, persistent) {
+            (Platform::Ios, true) => "serve-sim",
+            (Platform::Ios, false) => "cli",
+            (Platform::Android, true) => "grpc",
+            (Platform::Android, false) => "adb",
+        };
+        success(serde_json::json!({
+            "platform":if matches!(platform,Platform::Ios) {"ios"} else {"android"},
+            "backend":backend,
+            "experimental":matches!(platform,Platform::Android) && persistent,
+            "availability_probed":false,
+            "observations":{"fresh_screenshot":true,"latest_frame":accessibility,"accessibility":accessibility,
+                "image_formats":["png","jpeg"],"crop":true,"resize":true,"cache_requires_explicit_target":true},
+            "wait_conditions":{"visual_change":true,"visual_stability":true,"element_present":accessibility},
+            "application_render_acknowledged":false,
+            "limits":{"max_actions":16,"max_pending_operations":8,"max_step_timeout_ms":20000,
+                "max_cache_age_ms":5000,"max_image_dimension":4096,"max_ax_elements":200,"max_ax_depth":16},
+        }).to_string())
+    }
+
     #[tool(description = "Start inspection for the configured device")]
     async fn device_start(&self) -> CallToolResult {
         self.session
@@ -851,366 +891,17 @@ fn element_matches(
     }))
 }
 
-fn configured_platform() -> anyhow::Result<Platform> {
-    let platform = std::env::var("DEVICE_PLATFORM").unwrap_or_else(|_| "ios".to_owned());
-    parse_platform(&platform)
-}
-
-fn parse_platform(platform: &str) -> anyhow::Result<Platform> {
-    match platform.to_ascii_lowercase().as_str() {
-        "ios" => Ok(Platform::Ios),
-        "android" => Ok(Platform::Android),
-        platform => Err(anyhow::anyhow!(
-            "unsupported DEVICE_PLATFORM '{platform}'; use ios or android"
-        )),
-    }
-}
-
-async fn start_device(platform: Platform, runner: &dyn CommandRunner) -> anyhow::Result<String> {
-    match platform {
-        Platform::Ios => {
-            anyhow::bail!("iOS lifecycle must use the ownership-aware helper")
-        }
-        Platform::Android => {
-            run_adb_command(runner, &["start-server"]).await?;
-            timeout(PREVIEW_TIMEOUT, run_adb(runner, &["wait-for-device"]))
-                .await
-                .map_err(|_| anyhow::anyhow!("Android Emulator did not become ready"))??;
-            Ok("Android Emulator is ready".to_owned())
-        }
-    }
-}
-
-async fn status_device(platform: Platform, runner: &dyn CommandRunner) -> anyhow::Result<String> {
-    match platform {
-        Platform::Ios => run_serve_sim(runner, &["--list"]).await,
-        Platform::Android => run_adb(runner, &["devices"]).await,
-    }
-}
-
-async fn capture_device(
-    platform: Platform,
-    name: &str,
-    runner: &dyn CommandRunner,
-) -> anyhow::Result<(Vec<u8>, String)> {
-    match platform {
-        Platform::Ios => {
-            let directory = tempfile::tempdir()?;
-            let path = directory.path().join(format!("{name}.png"));
-            let output = run_command(
-                runner,
-                "xcrun",
-                &[
-                    "simctl".to_owned(),
-                    "io".to_owned(),
-                    ios_device_target(),
-                    "screenshot".to_owned(),
-                    path.display().to_string(),
-                ],
-            )
-            .await?;
-            let image_bytes = if output.stdout.is_empty() {
-                tokio::fs::read(&path).await?
-            } else {
-                output.stdout
-            };
-            let _ = tokio::fs::remove_file(&path).await;
-            Ok((image_bytes, "Captured iOS Simulator display".to_owned()))
-        }
-        Platform::Android => {
-            let image_bytes = run_adb_bytes(runner, &["exec-out", "screencap", "-p"]).await?;
-            Ok((image_bytes, "Captured Android Emulator display".to_owned()))
-        }
-    }
-}
-
-async fn tap_device(
-    platform: Platform,
-    x: f64,
-    y: f64,
-    runner: &dyn CommandRunner,
-) -> anyhow::Result<String> {
-    match platform {
-        Platform::Ios => {
-            let x = x.to_string();
-            let y = y.to_string();
-            let arguments = ["tap", x.as_str(), y.as_str()];
-            run_serve_sim(runner, &arguments).await
-        }
-        Platform::Android => {
-            let (pixel_x, pixel_y) = android_pixels(x, y, runner).await?;
-            run_adb(runner, &["shell", "input", "tap", &pixel_x, &pixel_y]).await
-        }
-    }
-}
-
 async fn swipe_device(
     platform: Platform,
     parameters: SwipeParameters,
     runner: &dyn CommandRunner,
 ) -> anyhow::Result<String> {
-    match platform {
-        Platform::Ios => {
-            let gestures = [
-                gesture_payload("begin", parameters.x1, parameters.y1),
-                gesture_payload("move", parameters.x2, parameters.y2),
-                gesture_payload("end", parameters.x2, parameters.y2),
-            ];
-            for gesture in gestures {
-                run_serve_sim(runner, &["gesture", &gesture]).await?;
-            }
-            Ok("Swipe completed".to_owned())
-        }
-        Platform::Android => {
-            let dimensions = android_dimensions(runner).await?;
-            let (start_x, start_y) = normalized_pixels(parameters.x1, parameters.y1, dimensions);
-            let (end_x, end_y) = normalized_pixels(parameters.x2, parameters.y2, dimensions);
-            run_adb(
-                runner,
-                &[
-                    "shell", "input", "swipe", &start_x, &start_y, &end_x, &end_y, "300",
-                ],
-            )
-            .await
-        }
-    }
-}
-
-async fn type_on_device(
-    platform: Platform,
-    text: &str,
-    runner: &dyn CommandRunner,
-) -> anyhow::Result<String> {
-    match platform {
-        Platform::Ios => run_serve_sim(runner, &["type", text]).await,
-        Platform::Android => {
-            let escaped_text = escape_android_text(text);
-            run_adb(runner, &["shell", "input", "text", &escaped_text]).await
-        }
-    }
-}
-
-fn escape_android_text(text: &str) -> String {
-    let mut escaped_text = String::with_capacity(text.len());
-    for character in text.chars() {
-        match character {
-            ' ' => escaped_text.push_str("%s"),
-            '\\' | '&' | ';' | '|' | '<' | '>' | '(' | ')' | '~' | '*' | '?' | '!' | '#' | '$'
-            | '\'' | '"' => {
-                escaped_text.push('\\');
-                escaped_text.push(character);
-            }
-            _ => escaped_text.push(character),
-        }
-    }
-    escaped_text
-}
-
-async fn android_pixels(
-    x: f64,
-    y: f64,
-    runner: &dyn CommandRunner,
-) -> anyhow::Result<(String, String)> {
-    let dimensions = android_dimensions(runner).await?;
-    Ok(normalized_pixels(x, y, dimensions))
-}
-
-async fn android_dimensions(runner: &dyn CommandRunner) -> anyhow::Result<(f64, f64)> {
-    let output = run_adb(runner, &["shell", "wm", "size"]).await?;
-    let dimensions = output
-        .lines()
-        .rev()
-        .find_map(|line| line.rsplit_once(' ').map(|(_, value)| value.trim()))
-        .ok_or_else(|| anyhow::anyhow!("could not determine Android display size"))?;
-    parse_display_size(dimensions)
-}
-
-fn normalized_pixels(x: f64, y: f64, (width, height): (f64, f64)) -> (String, String) {
-    (
-        (x * (width - 1.0)).round().to_string(),
-        (y * (height - 1.0)).round().to_string(),
+    crate::platform::swipe_device(
+        platform,
+        (parameters.x1, parameters.y1, parameters.x2, parameters.y2),
+        runner,
     )
-}
-
-async fn run_serve_sim(runner: &dyn CommandRunner, arguments: &[&str]) -> anyhow::Result<String> {
-    let mut command_arguments = Vec::new();
-    let device = std::env::var("IOS_SIMULATOR_UDID").ok();
-    if let Some(device) = device {
-        if arguments
-            .first()
-            .is_some_and(|argument| !argument.starts_with('-'))
-        {
-            command_arguments.push(arguments[0].to_owned());
-            command_arguments.extend(["--device".to_owned(), device]);
-            command_arguments.extend(arguments[1..].iter().map(|argument| (*argument).to_owned()));
-        } else {
-            command_arguments.extend(arguments.iter().map(|argument| (*argument).to_owned()));
-            command_arguments.push(device);
-        }
-    } else {
-        command_arguments.extend(arguments.iter().map(|argument| (*argument).to_owned()));
-    }
-    let (program, command_arguments) = ios::command(command_arguments)?;
-    run_command(runner, &program, &command_arguments)
-        .await
-        .map(|output| {
-            command_output(
-                &String::from_utf8_lossy(&output.stdout),
-                &String::from_utf8_lossy(&output.stderr),
-            )
-        })
-}
-
-fn ios_device_target() -> String {
-    std::env::var("IOS_SIMULATOR_UDID").unwrap_or_else(|_| "booted".to_owned())
-}
-
-async fn run_adb(runner: &dyn CommandRunner, arguments: &[&str]) -> anyhow::Result<String> {
-    let mut command_arguments = Vec::with_capacity(arguments.len() + 2);
-    if let Ok(serial) = std::env::var("ANDROID_SERIAL") {
-        command_arguments.extend(["-s".to_owned(), serial]);
-    }
-    command_arguments.extend(arguments.iter().map(|argument| (*argument).to_owned()));
-    run_command(runner, "adb", &command_arguments)
-        .await
-        .map(|output| {
-            command_output(
-                &String::from_utf8_lossy(&output.stdout),
-                &String::from_utf8_lossy(&output.stderr),
-            )
-        })
-}
-
-async fn run_adb_command(runner: &dyn CommandRunner, arguments: &[&str]) -> anyhow::Result<String> {
-    let command_arguments = arguments
-        .iter()
-        .map(|argument| (*argument).to_owned())
-        .collect::<Vec<_>>();
-    run_command(runner, "adb", &command_arguments)
-        .await
-        .map(|output| {
-            command_output(
-                &String::from_utf8_lossy(&output.stdout),
-                &String::from_utf8_lossy(&output.stderr),
-            )
-        })
-}
-
-fn parse_display_size(dimensions: &str) -> anyhow::Result<(f64, f64)> {
-    let (width, height) = dimensions
-        .split_once('x')
-        .ok_or_else(|| anyhow::anyhow!("invalid Android display size: {dimensions}"))?;
-    let dimensions = (width.parse::<f64>()?, height.parse::<f64>()?);
-    anyhow::ensure!(
-        dimensions.0.is_finite()
-            && dimensions.1.is_finite()
-            && dimensions.0 >= 1.0
-            && dimensions.1 >= 1.0
-            && dimensions.0 <= 8192.0
-            && dimensions.1 <= 8192.0,
-        "invalid Android display dimensions"
-    );
-    Ok(dimensions)
-}
-
-async fn run_adb_bytes(runner: &dyn CommandRunner, arguments: &[&str]) -> anyhow::Result<Vec<u8>> {
-    let mut command_arguments = Vec::with_capacity(arguments.len() + 2);
-    if let Ok(serial) = std::env::var("ANDROID_SERIAL") {
-        command_arguments.extend(["-s".to_owned(), serial]);
-    }
-    command_arguments.extend(arguments.iter().map(|argument| (*argument).to_owned()));
-    let output = runner
-        .run("adb", &command_arguments)
-        .await
-        .map_err(|error| actionable_command_error("adb", error))?;
-    if !output.success {
-        let output_message = command_output(
-            &String::from_utf8_lossy(&output.stdout),
-            &String::from_utf8_lossy(&output.stderr),
-        );
-        if let Some(error) = actionable_device_failure("adb", &output_message) {
-            return Err(error);
-        }
-        return Err(anyhow::anyhow!(
-            "adb failed with {}: {}",
-            output.status,
-            output_message
-        ));
-    }
-    Ok(output.stdout)
-}
-
-async fn run_command(
-    runner: &dyn CommandRunner,
-    command: &str,
-    arguments: &[String],
-) -> anyhow::Result<CommandOutput> {
-    let output = runner
-        .run(command, arguments)
-        .await
-        .map_err(|error| actionable_command_error(command, error))?;
-    let standard_output = String::from_utf8_lossy(&output.stdout);
-    let standard_error = String::from_utf8_lossy(&output.stderr);
-    if !output.success {
-        let output_message = command_output(&standard_output, &standard_error);
-        if let Some(error) = actionable_device_failure(command, &output_message) {
-            return Err(error);
-        }
-        return Err(anyhow::anyhow!(
-            "{command} failed with {}: {}",
-            output.status,
-            output_message
-        ));
-    }
-    Ok(output)
-}
-
-fn actionable_command_error(command: &str, error: anyhow::Error) -> anyhow::Error {
-    let is_missing_command = error
-        .downcast_ref::<io::Error>()
-        .is_some_and(|io_error| io_error.kind() == io::ErrorKind::NotFound);
-    if !is_missing_command {
-        return error;
-    }
-
-    let message = match command {
-        "adb" => {
-            "`adb` was not found. Install Android SDK Platform-Tools, add its ".to_owned()
-                + "platform-tools directory to PATH, and retry."
-        }
-        "npx" => {
-            "`npx` was not found. Install Node.js 24.21.0 or newer, ensure ".to_owned()
-                + "npx is on PATH, and retry."
-        }
-        "xcrun" => {
-            "`xcrun` was not found. Install Xcode Command Line Tools with ".to_owned()
-                + "`xcode-select --install`, then retry."
-        }
-        _ => format!("`{command}` was not found. Install it and ensure it is on PATH, then retry."),
-    };
-    anyhow::anyhow!(message)
-}
-
-fn actionable_device_failure(command: &str, output: &str) -> Option<anyhow::Error> {
-    if command == "adb"
-        && (output.contains("no devices/emulators found") || output.contains("device offline"))
-    {
-        return Some(anyhow::anyhow!(
-            "No usable Android device was found. Start an Android Emulator or connect a device, "
-                .to_owned()
-                + "then retry. Set ANDROID_SERIAL when more than one device is available."
-        ));
-    }
-
-    if command == "npx" && output.contains("could not determine executable to run") {
-        return Some(anyhow::anyhow!(
-            "`serve-sim` could not be started through npx. Install Node.js 24.21.0 or newer, "
-                .to_owned()
-                + "ensure npx is on PATH, and retry."
-        ));
-    }
-
-    None
+    .await
 }
 
 fn validate_coordinates(coordinates: &[f64]) -> anyhow::Result<()> {
@@ -1240,18 +931,6 @@ fn validate_screenshot_name(name: &str) -> anyhow::Result<()> {
         ));
     }
     Ok(())
-}
-
-fn gesture_payload(gesture_type: &str, x: f64, y: f64) -> String {
-    format!(r#"{{"type":"{gesture_type}","x":{x},"y":{y}}}"#)
-}
-
-fn command_output(standard_output: &str, standard_error: &str) -> String {
-    let output = standard_output.trim();
-    if !output.is_empty() {
-        return output.to_owned();
-    }
-    standard_error.trim().to_owned()
 }
 
 fn success(message: String) -> CallToolResult {
@@ -2135,6 +1814,32 @@ mod tests {
             .await;
         assert_eq!(result.is_error, Some(true));
         assert!(runner.calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn reports_configured_capabilities_without_claiming_readiness_or_device_io() {
+        let _environment_lock = DEVICE_PLATFORM_LOCK.lock().await;
+        unsafe {
+            std::env::set_var("DEVICE_PLATFORM", "android");
+        }
+        let runner = Arc::new(FakeCommandRunner::default());
+        let service = DeviceSimulatorMcp {
+            runner: runner.clone(),
+            ..Default::default()
+        };
+        let result = service.device_capabilities().await;
+        assert_eq!(result.is_error, Some(false));
+        let result = serde_json::to_value(result).unwrap();
+        let value: serde_json::Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(value["backend"], "adb");
+        assert_eq!(value["availability_probed"], false);
+        assert_eq!(value["wait_conditions"]["element_present"], false);
+        assert_eq!(value["wait_conditions"]["visual_stability"], true);
+        assert!(runner.calls().is_empty());
+        unsafe {
+            std::env::remove_var("DEVICE_PLATFORM");
+        }
     }
 
     #[test]

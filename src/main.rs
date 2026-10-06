@@ -7,6 +7,7 @@ mod ios;
 mod ios_lifecycle;
 mod mcp;
 mod observation;
+mod platform;
 mod process;
 mod session;
 mod visual_wait;
