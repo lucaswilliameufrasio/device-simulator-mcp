@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Features
 
+- Exclude Intel macOS from future release targets and reject Intel hosts in the
+  shell installer.
 - Add paired equivalent direct-CLI/MCP capture benchmarks and optional MCP-only
   idle CPU/RSS sampling.
 - Add configured backend capability discovery without probing device readiness.

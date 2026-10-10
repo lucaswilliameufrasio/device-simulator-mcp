@@ -18,6 +18,112 @@ use tonic::{
     transport::Channel,
 };
 
+const MAX_MULTITOUCH_FRAMES: usize = 32;
+const MAX_MULTITOUCH_CONTACTS: usize = 5;
+const MAX_MULTITOUCH_FRAME_DELAY_MS: u64 = 2_000;
+const MAX_MULTITOUCH_TOTAL_DELAY_MS: u64 = 10_000;
+
+#[derive(Clone, Copy, Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ContactPhase {
+    Down,
+    Move,
+    Up,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct MultiTouchContact {
+    pub id: u8,
+    pub x: f64,
+    pub y: f64,
+    pub phase: ContactPhase,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct MultiTouchFrame {
+    /// Delay after this frame before submitting the next frame (0..=2000 ms).
+    pub delay_ms: Option<u64>,
+    /// Contacts submitted together in one Emulator Controller TouchEvent.
+    pub contacts: Vec<MultiTouchContact>,
+}
+
+pub(crate) fn validate_multitouch_frames(frames: &[MultiTouchFrame]) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !frames.is_empty() && frames.len() <= MAX_MULTITOUCH_FRAMES,
+        "multitouch requires between 1 and 32 frames"
+    );
+    let mut active = std::collections::HashSet::new();
+    let mut total_delay_ms = 0;
+    let mut submitted_down = false;
+    for (index, frame) in frames.iter().enumerate() {
+        anyhow::ensure!(
+            !frame.contacts.is_empty() && frame.contacts.len() <= MAX_MULTITOUCH_CONTACTS,
+            "each multitouch frame requires between 1 and 5 contacts"
+        );
+        let delay_ms = if index + 1 < frames.len() {
+            frame.delay_ms.unwrap_or(30)
+        } else {
+            0
+        };
+        anyhow::ensure!(
+            delay_ms <= MAX_MULTITOUCH_FRAME_DELAY_MS,
+            "multitouch frame delay must be at most 2000 ms"
+        );
+        total_delay_ms += delay_ms;
+        anyhow::ensure!(
+            total_delay_ms <= MAX_MULTITOUCH_TOTAL_DELAY_MS,
+            "multitouch total delay must be at most 10000 ms"
+        );
+        let mut frame_ids = std::collections::HashSet::new();
+        for contact in &frame.contacts {
+            anyhow::ensure!(
+                contact.id < 10,
+                "multitouch contact id must be between 0 and 9"
+            );
+            anyhow::ensure!(
+                contact.x.is_finite()
+                    && contact.y.is_finite()
+                    && (0.0..=1.0).contains(&contact.x)
+                    && (0.0..=1.0).contains(&contact.y),
+                "multitouch coordinates must be finite and between 0 and 1"
+            );
+            anyhow::ensure!(
+                frame_ids.insert(contact.id),
+                "a multitouch frame cannot contain the same contact id more than once"
+            );
+            match contact.phase {
+                ContactPhase::Down => {
+                    anyhow::ensure!(
+                        active.insert(contact.id),
+                        "multitouch down requires an inactive contact id"
+                    );
+                    submitted_down = true;
+                }
+                ContactPhase::Move => anyhow::ensure!(
+                    active.contains(&contact.id),
+                    "multitouch move requires an active contact id"
+                ),
+                ContactPhase::Up => anyhow::ensure!(
+                    active.remove(&contact.id),
+                    "multitouch up requires an active contact id"
+                ),
+            }
+        }
+        anyhow::ensure!(
+            active.len() <= MAX_MULTITOUCH_CONTACTS,
+            "multitouch cannot hold more than 5 simultaneous contacts"
+        );
+    }
+    anyhow::ensure!(submitted_down, "multitouch must start at least one contact");
+    anyhow::ensure!(
+        active.is_empty(),
+        "multitouch frames must release every contact"
+    );
+    Ok(())
+}
+
 pub(crate) struct Backend {
     config: Result<Option<Config>, String>,
     channel: tokio::sync::Mutex<Option<Channel>>,
@@ -175,16 +281,21 @@ impl Backend {
     }
 
     async fn touch(&self, x: i32, y: i32, identifier: i32, pressure: i32) -> anyhow::Result<()> {
+        self.touch_contacts(vec![Touch {
+            x,
+            y,
+            identifier,
+            pressure,
+        }])
+        .await
+    }
+
+    async fn touch_contacts(&self, touches: Vec<Touch>) -> anyhow::Result<()> {
         let _: Empty = self
             .call(
                 "/android.emulation.control.EmulatorController/sendTouch",
                 TouchEvent {
-                    touches: vec![Touch {
-                        x,
-                        y,
-                        identifier,
-                        pressure,
-                    }],
+                    touches,
                     display: 0,
                 },
             )
@@ -256,6 +367,54 @@ impl Backend {
             .await?;
         Ok("Text scheduled; application rendering is not acknowledged".to_owned())
     }
+
+    pub async fn multitouch(
+        self: &Arc<Self>,
+        frames: &[MultiTouchFrame],
+    ) -> anyhow::Result<String> {
+        validate_multitouch_frames(frames)?;
+        let permit = self.input.clone().acquire_owned().await?;
+        let dimensions = self.image().await?.dimensions()?;
+        let mut guard = MultiTouchGuard {
+            backend: self.clone(),
+            active: std::collections::BTreeMap::new(),
+            permit: Some(permit),
+        };
+
+        for (index, frame) in frames.iter().enumerate() {
+            let touches = frame
+                .contacts
+                .iter()
+                .map(|contact| {
+                    let (x, y) = pixels(contact.x, contact.y, dimensions);
+                    Touch {
+                        x,
+                        y,
+                        identifier: i32::from(contact.id),
+                        pressure: if matches!(contact.phase, ContactPhase::Up) {
+                            0
+                        } else {
+                            1
+                        },
+                    }
+                })
+                .collect::<Vec<_>>();
+            for (contact, touch) in frame.contacts.iter().zip(&touches) {
+                guard.active.insert(contact.id, (touch.x, touch.y));
+            }
+            self.touch_contacts(touches).await?;
+            for contact in &frame.contacts {
+                if matches!(contact.phase, ContactPhase::Up) {
+                    guard.active.remove(&contact.id);
+                }
+            }
+            if index + 1 < frames.len() {
+                tokio::time::sleep(Duration::from_millis(frame.delay_ms.unwrap_or(30))).await;
+            }
+        }
+        guard.active.clear();
+        Ok("Multitouch frames submitted; application rendering is not acknowledged".to_owned())
+    }
 }
 
 struct TouchGuard {
@@ -282,6 +441,37 @@ impl Drop for TouchGuard {
             let _ =
                 tokio::time::timeout(Duration::from_secs(1), backend.touch(x, y, identifier, 0))
                     .await;
+        });
+    }
+}
+
+struct MultiTouchGuard {
+    backend: Arc<Backend>,
+    active: std::collections::BTreeMap<u8, (i32, i32)>,
+    permit: Option<tokio::sync::OwnedSemaphorePermit>,
+}
+
+impl Drop for MultiTouchGuard {
+    fn drop(&mut self) {
+        if self.active.is_empty() {
+            return;
+        }
+        let backend = self.backend.clone();
+        let touches = self
+            .active
+            .iter()
+            .map(|(identifier, (x, y))| Touch {
+                x: *x,
+                y: *y,
+                identifier: i32::from(*identifier),
+                pressure: 0,
+            })
+            .collect();
+        let permit = self.permit.take();
+        tokio::spawn(async move {
+            let _permit = permit;
+            let _ =
+                tokio::time::timeout(Duration::from_secs(1), backend.touch_contacts(touches)).await;
         });
     }
 }
@@ -393,6 +583,33 @@ mod tests {
             }
             .encode_to_vec(),
             vec![8, 1, 16, 2, 24, 9, 32, 1]
+        );
+    }
+
+    #[test]
+    fn encodes_two_simultaneous_contacts_in_one_touch_event() {
+        assert_eq!(
+            TouchEvent {
+                touches: vec![
+                    Touch {
+                        x: 10,
+                        y: 20,
+                        identifier: 0,
+                        pressure: 1,
+                    },
+                    Touch {
+                        x: 30,
+                        y: 40,
+                        identifier: 1,
+                        pressure: 1,
+                    },
+                ],
+                display: 0,
+            }
+            .encode_to_vec(),
+            vec![
+                10, 6, 8, 10, 16, 20, 32, 1, 10, 8, 8, 30, 16, 40, 24, 1, 32, 1
+            ]
         );
     }
 

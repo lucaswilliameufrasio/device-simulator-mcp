@@ -16,7 +16,17 @@ pub(crate) struct CommandOutput {
 
 #[async_trait]
 pub(crate) trait CommandRunner: Send + Sync {
-    async fn run(&self, command: &str, arguments: &[String]) -> anyhow::Result<CommandOutput>;
+    async fn run_with_timeout(
+        &self,
+        command: &str,
+        arguments: &[String],
+        command_timeout: std::time::Duration,
+    ) -> anyhow::Result<CommandOutput>;
+
+    async fn run(&self, command: &str, arguments: &[String]) -> anyhow::Result<CommandOutput> {
+        self.run_with_timeout(command, arguments, COMMAND_TIMEOUT)
+            .await
+    }
 }
 
 pub(crate) struct ProcessCommandRunner;
@@ -99,7 +109,12 @@ impl Drop for ManagedProcess {
 
 #[async_trait]
 impl CommandRunner for ProcessCommandRunner {
-    async fn run(&self, command: &str, arguments: &[String]) -> anyhow::Result<CommandOutput> {
+    async fn run_with_timeout(
+        &self,
+        command: &str,
+        arguments: &[String],
+        command_timeout: std::time::Duration,
+    ) -> anyhow::Result<CommandOutput> {
         let started = Instant::now();
         let mut builder = Command::new(command);
         builder
@@ -114,7 +129,7 @@ impl CommandRunner for ProcessCommandRunner {
         let group = ProcessGroup(child.id());
         let stdout = child.stdout.take().expect("piped stdout");
         let stderr = child.stderr.take().expect("piped stderr");
-        let result = timeout(COMMAND_TIMEOUT, async {
+        let result = timeout(command_timeout, async {
             tokio::try_join!(
                 async { Ok::<_, anyhow::Error>(child.wait().await?) },
                 read_bounded(stdout),
@@ -181,5 +196,23 @@ mod tests {
         )
         .await;
         assert!(result.is_err());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn honors_a_command_specific_timeout() {
+        let result = ProcessCommandRunner
+            .run_with_timeout(
+                "sleep",
+                &["30".to_owned()],
+                std::time::Duration::from_millis(50),
+            )
+            .await;
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("command deadline exceeded")
+        );
     }
 }

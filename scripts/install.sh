@@ -42,7 +42,6 @@ os="$(uname -s)"
 architecture="$(uname -m)"
 case "$os/$architecture" in
   Darwin/arm64|Darwin/aarch64) target="aarch64-apple-darwin" ;;
-  Darwin/x86_64|Darwin/amd64) target="x86_64-apple-darwin" ;;
   Linux/arm64|Linux/aarch64) target="aarch64-unknown-linux-gnu" ;;
   Linux/x86_64|Linux/amd64) target="x86_64-unknown-linux-gnu" ;;
   *)

@@ -121,8 +121,16 @@ impl Config {
 
     async fn response(&self, endpoint: &str) -> anyhow::Result<reqwest::Response> {
         let result = self.client.get(self.url(endpoint)).send().await;
-        let response = result.map_err(|_| anyhow::anyhow!(
-            "serve-sim unavailable; start serve-sim@0.1.47 for the configured simulator or select cli backend"))?;
+        let response = result.map_err(|error| {
+            let reason = if error.is_timeout() {
+                "request timed out"
+            } else if error.is_connect() {
+                "connection failed"
+            } else {
+                "request failed"
+            };
+            anyhow::anyhow!("serve-sim {reason}; start serve-sim@0.1.47 for the configured simulator or select cli backend")
+        })?;
         anyhow::ensure!(
             response.status().is_success(),
             "serve-sim endpoint {endpoint} is unavailable"
@@ -333,6 +341,21 @@ impl Backend {
         Ok("Text submitted; application rendering is not acknowledged".to_owned())
     }
 
+    pub async fn rotate(
+        &self,
+        orientation: crate::platform::Orientation,
+    ) -> anyhow::Result<String> {
+        let mut input = self.ready_socket().await?;
+        Self::send(
+            input.socket(),
+            7,
+            json!({"orientation": orientation.serve_sim_value()}),
+        )
+        .await?;
+        *self.socket.lock().await = input.socket.take();
+        Ok("Orientation submitted; simulator acknowledgement is not available".to_owned())
+    }
+
     pub async fn accessibility(&self) -> anyhow::Result<serde_json::Value> {
         let config = self.config()?;
         Ok(serde_json::from_slice(
@@ -505,7 +528,10 @@ mod tests {
                     while let Some(Ok(message)) = socket.next().await {
                         match message {
                             Message::Binary(bytes) => {
-                                let value = serde_json::from_slice(&bytes[1..]).unwrap();
+                                let tag = bytes[0];
+                                let mut value: serde_json::Value =
+                                    serde_json::from_slice(&bytes[1..]).unwrap();
+                                value["_tag"] = tag.into();
                                 let _ = events.send(value);
                             }
                             Message::Ping(bytes) => {
@@ -548,6 +574,26 @@ mod tests {
         assert_eq!(received[0]["type"], "begin");
         assert_eq!(received[1]["type"], "end");
         assert_eq!(received[4]["usage"], 0xe1);
+        backend.stop().await.unwrap();
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn submits_orientation_over_the_existing_input_websocket() {
+        let (backend, mut events, connections, server) = mock_backend().await;
+
+        backend
+            .rotate(crate::platform::Orientation::LandscapeRight)
+            .await
+            .unwrap();
+        let event = tokio::time::timeout(Duration::from_secs(1), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(event["_tag"], 7);
+        assert_eq!(event["orientation"], "landscape_right");
+        assert_eq!(connections.load(std::sync::atomic::Ordering::SeqCst), 1);
         backend.stop().await.unwrap();
         server.abort();
     }
