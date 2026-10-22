@@ -168,11 +168,17 @@ fn configuration() -> anyhow::Result<Option<Config>> {
 }
 
 impl Backend {
-    pub fn enabled(&self) -> anyhow::Result<bool> {
-        self.config
-            .as_ref()
-            .map(|config| config.is_some())
-            .map_err(|error| anyhow::anyhow!("{error}"))
+    pub(crate) fn for_target(endpoint: &str, token_file: PathBuf) -> anyhow::Result<Self> {
+        crate::ios::local_url(endpoint)?;
+        Ok(Self {
+            config: Ok(Some(Config {
+                endpoint: endpoint.to_owned(),
+                token_file,
+            })),
+            channel: Default::default(),
+            input: Arc::new(tokio::sync::Semaphore::new(1)),
+            next_touch: AtomicU32::new(100),
+        })
     }
 
     async fn call<T, U>(&self, method: &'static str, message: T) -> anyhow::Result<U>

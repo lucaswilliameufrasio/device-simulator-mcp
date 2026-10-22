@@ -132,6 +132,8 @@ fn lists_legacy_and_new_tools_in_one_persistent_session() {
     assert!(inspect["inputSchema"]["properties"]["label_contains"].is_object());
     assert!(inspect["inputSchema"]["properties"]["max_elements"].is_object());
     for name in [
+        "device_list",
+        "device_select",
         "device_start",
         "device_stop",
         "device_status",
@@ -289,14 +291,14 @@ fn protocol_cancellation_kills_input_process_and_releases_session() {
     let directory = tempfile::tempdir().unwrap();
     let executable = directory.path().join("adb");
     let pid_file = directory.path().join("pid");
-    std::fs::write(&executable, "#!/bin/sh\nif [ \"$1\" = devices ]; then echo ready; exit 0; fi\necho $$ > \"$TEST_PID_FILE\"\nexec sleep 30\n").unwrap();
+    std::fs::write(&executable, "#!/bin/sh\nif [ \"$1\" = -s ] && [ \"$3\" = get-state ]; then echo device; exit 0; fi\necho $$ > \"$TEST_PID_FILE\"\nexec sleep 30\n").unwrap();
     std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
     let mut command = server_command();
     let path = std::env::var("PATH").unwrap_or_default();
     command
         .env("PATH", format!("{}:{path}", directory.path().display()))
         .env("TEST_PID_FILE", &pid_file);
-    let mut client = Client::start(command);
+    let mut client = Client::start_target(command, Some("fixture-target"));
     client.send(
         serde_json::json!({"jsonrpc":"2.0","id":10,"method":"tools/call",
         "params":{"name":"device_type","arguments":{"text":"sample"}}}),

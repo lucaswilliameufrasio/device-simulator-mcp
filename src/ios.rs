@@ -46,13 +46,27 @@ impl Default for Backend {
 }
 
 fn configuration() -> anyhow::Result<Option<Config>> {
-    match std::env::var("DEVICE_IOS_BACKEND").as_deref() {
-        Err(_) | Ok("cli") => return Ok(None),
-        Ok("serve-sim") => {}
-        _ => anyhow::bail!("DEVICE_IOS_BACKEND must be cli or serve-sim"),
+    configuration_for_device(None, None)
+}
+
+fn configuration_for_device(
+    device_override: Option<&str>,
+    persistent_override: Option<bool>,
+) -> anyhow::Result<Option<Config>> {
+    match persistent_override {
+        Some(false) => return Ok(None),
+        Some(true) => {}
+        None => match std::env::var("DEVICE_IOS_BACKEND").as_deref() {
+            Err(_) | Ok("cli") => return Ok(None),
+            Ok("serve-sim") => {}
+            _ => anyhow::bail!("DEVICE_IOS_BACKEND must be cli or serve-sim"),
+        },
     }
-    let device = std::env::var("IOS_SIMULATOR_UDID")
-        .map_err(|_| anyhow::anyhow!("persistent iOS requires IOS_SIMULATOR_UDID"))?;
+    let device = match device_override {
+        Some(device) => device.to_owned(),
+        None => std::env::var("IOS_SIMULATOR_UDID")
+            .map_err(|_| anyhow::anyhow!("persistent iOS requires IOS_SIMULATOR_UDID"))?,
+    };
     validate_udid(&device)?;
     let base = if let Ok(helper) = std::env::var("SERVE_SIM_HELPER_URL") {
         let base = local_url(&helper)?;
@@ -152,6 +166,15 @@ async fn limited_body(mut response: reqwest::Response, limit: usize) -> anyhow::
 }
 
 impl Backend {
+    pub(crate) fn for_device(device: &str, persistent: bool) -> anyhow::Result<Self> {
+        Ok(Self {
+            config: configuration_for_device(Some(device), Some(persistent))
+                .map_err(|error| error.to_string()),
+            socket: Default::default(),
+            input: std::sync::Arc::new(tokio::sync::Semaphore::new(1)),
+        })
+    }
+
     pub(crate) fn for_helper(helper: &str) -> anyhow::Result<Self> {
         let base = local_url(helper)?;
         let client = reqwest::Client::builder()

@@ -16,31 +16,18 @@ pub(crate) struct Target {
 }
 
 impl Target {
-    pub(crate) fn configured() -> anyhow::Result<Option<Self>> {
-        match std::env::var("DEVICE_IOS_TARGET").as_deref() {
-            Err(_) | Ok("simulator") => Ok(None),
-            Ok("device") => {
-                let identifier = std::env::var("IOS_DEVICE_UDID")
-                    .map_err(|_| anyhow::anyhow!("physical iOS requires IOS_DEVICE_UDID"))?;
-                anyhow::ensure!(
-                    !identifier.trim().is_empty() && identifier.len() <= 128,
-                    "IOS_DEVICE_UDID must contain between 1 and 128 characters"
-                );
-                let wda = std::env::var("IOS_WDA_URL")
-                    .ok()
-                    .map(|value| validate_wda_url(&value))
-                    .transpose()?;
-                Ok(Some(Self { identifier, wda }))
-            }
-            Ok(_) => anyhow::bail!("DEVICE_IOS_TARGET must be simulator or device"),
-        }
+    pub(crate) fn for_identifier(
+        identifier: String,
+        wda: Option<reqwest::Url>,
+    ) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            !identifier.trim().is_empty() && identifier.len() <= 128,
+            "physical iOS device identifier must contain between 1 and 128 characters"
+        );
+        Ok(Self { identifier, wda })
     }
 
-    pub(crate) fn has_wda(&self) -> bool {
-        self.wda.is_some()
-    }
-
-    pub(crate) async fn status(&self, runner: &dyn CommandRunner) -> anyhow::Result<String> {
+    async fn details(&self, runner: &dyn CommandRunner) -> anyhow::Result<serde_json::Value> {
         let output = run_devicectl(
             runner,
             &[
@@ -54,7 +41,19 @@ impl Target {
             ],
         )
         .await?;
-        let value: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+        Ok(serde_json::from_slice(&output.stdout)?)
+    }
+
+    pub(crate) async fn automation_udid(
+        &self,
+        runner: &dyn CommandRunner,
+    ) -> anyhow::Result<String> {
+        let details = self.details(runner).await?;
+        physical_hardware_udid(&details)
+    }
+
+    pub(crate) async fn status(&self, runner: &dyn CommandRunner) -> anyhow::Result<String> {
+        let value = self.details(runner).await?;
         let name = value
             .get("result")
             .and_then(|result| result.get("deviceProperties"))
@@ -243,6 +242,98 @@ impl Target {
     }
 }
 
+fn physical_hardware_udid(details: &serde_json::Value) -> anyhow::Result<String> {
+    let udid = details
+        .pointer("/result/hardwareProperties/udid")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "devicectl returned no hardware UDID; cannot safely target XCTest or iproxy"
+            )
+        })?;
+    anyhow::ensure!(
+        !udid.is_empty()
+            && udid.len() <= 128
+            && udid
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-'),
+        "devicectl returned an invalid hardware UDID"
+    );
+    Ok(udid.to_owned())
+}
+
+pub(crate) async fn discover_devices(
+    runner: &dyn CommandRunner,
+) -> anyhow::Result<Vec<crate::device::DeviceTarget>> {
+    let wda_url = std::env::var("IOS_WDA_URL")
+        .ok()
+        .map(|value| validate_wda_url(&value))
+        .transpose()?;
+    discover_devices_with_wda(runner, wda_url).await
+}
+
+pub(crate) async fn discover_devices_with_wda(
+    runner: &dyn CommandRunner,
+    wda_url: Option<reqwest::Url>,
+) -> anyhow::Result<Vec<crate::device::DeviceTarget>> {
+    let output = run_devicectl(
+        runner,
+        &[
+            "list".to_owned(),
+            "devices".to_owned(),
+            "--json-output".to_owned(),
+            "-".to_owned(),
+        ],
+    )
+    .await?;
+    let inventory: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let devices = inventory
+        .pointer("/result/devices")
+        .or_else(|| inventory.get("devices"))
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| anyhow::anyhow!("invalid devicectl device inventory"))?;
+    let mut targets = Vec::new();
+    for device in devices {
+        let udid = device
+            .get("identifier")
+            .and_then(serde_json::Value::as_str)
+            .or_else(|| {
+                device
+                    .pointer("/hardwareProperties/udid")
+                    .and_then(serde_json::Value::as_str)
+            });
+        let Some(udid) = udid else {
+            continue;
+        };
+        let name = device
+            .pointer("/deviceProperties/name")
+            .or_else(|| device.pointer("/hardwareProperties/name"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("iPhone")
+            .to_owned();
+        let tunnel_state = device
+            .pointer("/connectionProperties/tunnelState")
+            .and_then(serde_json::Value::as_str);
+        let pairing_state = device
+            .pointer("/connectionProperties/pairingState")
+            .and_then(serde_json::Value::as_str);
+        let availability = match (tunnel_state, pairing_state) {
+            (Some("connected"), Some("paired")) => "available",
+            (Some("disconnected"), _) | (_, Some("unpaired")) => "unavailable",
+            (Some(state), _) => state,
+            (_, Some(state)) => state,
+            _ => "unknown",
+        };
+        targets.push(crate::device::physical_target(
+            udid.to_owned(),
+            name,
+            availability.to_owned(),
+            wda_url.clone(),
+        ));
+    }
+    Ok(targets)
+}
+
 async fn parse_wda_response(response: reqwest::Response) -> anyhow::Result<serde_json::Value> {
     let mut stream = response.bytes_stream();
     let mut bytes = Vec::new();
@@ -257,7 +348,7 @@ async fn parse_wda_response(response: reqwest::Response) -> anyhow::Result<serde
     Ok(serde_json::from_slice(&bytes)?)
 }
 
-fn validate_wda_url(value: &str) -> anyhow::Result<reqwest::Url> {
+pub(crate) fn validate_wda_url(value: &str) -> anyhow::Result<reqwest::Url> {
     let url = reqwest::Url::parse(value)?;
     anyhow::ensure!(
         url.scheme() == "http"
@@ -462,7 +553,7 @@ mod tests {
             Ok(crate::process::CommandOutput {
                 success: true,
                 status: "success".to_owned(),
-                stdout: br#"{"result":{"deviceProperties":{"name":"Test iPhone"}}}"#.to_vec(),
+                stdout: br#"{"result":{"hardwareProperties":{"udid":"00008110-001234567890001E"},"deviceProperties":{"name":"Test iPhone"}}}"#.to_vec(),
                 stderr: Vec::new(),
             })
         }
@@ -486,6 +577,29 @@ mod tests {
         assert_eq!(
             target.status(&DetailsRunner).await.unwrap(),
             "devicectl returned details for physical iOS device: Test iPhone"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolves_the_hardware_udid_without_using_the_coredevice_identifier_for_automation() {
+        let target = Target::for_identifier("device-123".to_owned(), None).unwrap();
+        assert_eq!(
+            target.automation_udid(&DetailsRunner).await.unwrap(),
+            "00008110-001234567890001E"
+        );
+    }
+
+    #[test]
+    fn refuses_missing_or_invalid_hardware_udids_instead_of_guessing() {
+        assert!(
+            physical_hardware_udid(&serde_json::json!({"result":{"identifier":"coredevice-id"}}))
+                .is_err()
+        );
+        assert!(
+            physical_hardware_udid(
+                &serde_json::json!({"result":{"hardwareProperties":{"udid":"invalid,id=other"}}})
+            )
+            .is_err()
         );
     }
 

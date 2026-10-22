@@ -22,6 +22,17 @@ fn registration(root: &Path, client: &str, scope: &str, platform: &str) -> Comma
     command
 }
 
+fn registration_with_ios_runner_settings(root: &Path, client: &str) -> Command {
+    let mut command = registration(root, client, "user", "ios");
+    command.args([
+        "--ios-runner-transport",
+        "iproxy",
+        "--ios-runner-signing-mode",
+        "local",
+    ]);
+    command
+}
+
 fn config_path(root: &Path, client: &str, scope: &str) -> std::path::PathBuf {
     let base = root.join(if scope == "user" { "home" } else { "project" });
     match (client, scope) {
@@ -58,6 +69,28 @@ fn assert_registered(contents: &str, client: &str, platform: &str) {
             assert_eq!(server["env"]["DEVICE_PLATFORM"], platform);
         }
     }
+}
+
+fn assert_ios_runner_settings(contents: &str, client: &str) {
+    if client == "codex" {
+        let config = contents.parse::<toml_edit::DocumentMut>().unwrap();
+        let environment = &config["mcp_servers"]["device-simulator"]["env"];
+        assert_eq!(environment["IOS_RUNNER_TRANSPORT"].as_str(), Some("iproxy"));
+        assert_eq!(
+            environment["IOS_RUNNER_SIGNING_MODE"].as_str(),
+            Some("local")
+        );
+        return;
+    }
+
+    let config: serde_json::Value = serde_json::from_str(contents).unwrap();
+    let environment = if client == "opencode" {
+        &config["mcp"]["device-simulator"]["environment"]
+    } else {
+        &config["mcpServers"]["device-simulator"]["env"]
+    };
+    assert_eq!(environment["IOS_RUNNER_TRANSPORT"], "iproxy");
+    assert_eq!(environment["IOS_RUNNER_SIGNING_MODE"], "local");
 }
 
 #[test]
@@ -97,6 +130,67 @@ fn previews_and_registers_all_clients_scopes_and_platforms_idempotently() {
             }
         }
     }
+}
+
+#[test]
+fn registration_persists_ios_runner_settings_without_selecting_a_device() {
+    for client in CLIENTS {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path();
+        fs::create_dir(root.join("project")).unwrap();
+        let path = config_path(root, client, "user");
+        let preview = registration_with_ios_runner_settings(root, client)
+            .output()
+            .unwrap();
+        assert!(preview.status.success(), "{client}");
+        assert!(!path.exists(), "preview must not write configuration");
+        let preview_text = String::from_utf8(preview.stdout).unwrap();
+        let preview_configuration = preview_text
+            .split_once("\n\n")
+            .map(|(_, configuration)| configuration)
+            .expect("preview should separate the configuration from its preamble");
+        assert_ios_runner_settings(preview_configuration, client);
+
+        let applied = registration_with_ios_runner_settings(root, client)
+            .arg("--apply")
+            .output()
+            .unwrap();
+        assert!(applied.status.success(), "{client}");
+
+        let original = fs::read_to_string(&path).unwrap();
+        assert_registered(&original, client, "ios");
+        assert_ios_runner_settings(&original, client);
+        assert!(!original.contains("IOS_DEVICE_UDID"));
+        assert!(!original.contains("IOS_DEVICE_TEAM_ID"));
+
+        let repeated = registration_with_ios_runner_settings(root, client)
+            .arg("--apply")
+            .output()
+            .unwrap();
+        assert!(repeated.status.success(), "{client}");
+        assert_eq!(fs::read_to_string(&path).unwrap(), original);
+
+        let without_runner_options = registration(root, client, "user", "ios")
+            .arg("--apply")
+            .output()
+            .unwrap();
+        assert!(without_runner_options.status.success(), "{client}");
+        assert_eq!(fs::read_to_string(path).unwrap(), original);
+    }
+}
+
+#[test]
+fn registration_rejects_ios_runner_settings_for_android() {
+    let temporary = tempfile::tempdir().unwrap();
+    let root = temporary.path();
+    fs::create_dir(root.join("project")).unwrap();
+    let rejected = registration(root, "opencode", "project", "android")
+        .args(["--ios-runner-transport", "iproxy", "--apply"])
+        .output()
+        .unwrap();
+
+    assert!(!rejected.status.success());
+    assert!(!config_path(root, "opencode", "project").exists());
 }
 
 #[test]

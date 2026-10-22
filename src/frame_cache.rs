@@ -37,6 +37,16 @@ impl Cache {
     pub fn clear(&mut self) {
         self.entry = None;
     }
+
+    pub fn clear_target(&mut self, target_key: &str) {
+        if self
+            .entry
+            .as_ref()
+            .is_some_and(|(key, _)| key.starts_with(&format!("{target_key}:")))
+        {
+            self.clear();
+        }
+    }
 }
 
 #[cfg(test)]
@@ -72,5 +82,31 @@ mod tests {
         assert!(cache.get("ios", Duration::from_secs(5)).is_none());
         cache.store("android".to_owned(), frame());
         assert!(cache.get("ios", Duration::from_secs(20)).is_none());
+    }
+
+    #[test]
+    fn invalidation_only_clears_the_matching_target() {
+        let mut cache = Cache::default();
+        cache.store("ios-simulator:first:cli:false:device".to_owned(), frame());
+
+        cache.clear_target("ios-simulator:second:cli");
+
+        assert!(
+            cache
+                .get(
+                    "ios-simulator:first:cli:false:device",
+                    Duration::from_secs(1)
+                )
+                .is_some()
+        );
+        cache.clear_target("ios-simulator:first:cli");
+        assert!(
+            cache
+                .get(
+                    "ios-simulator:first:cli:false:device",
+                    Duration::from_secs(1)
+                )
+                .is_none()
+        );
     }
 }

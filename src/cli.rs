@@ -17,6 +17,8 @@ pub(crate) struct Cli {
 pub(crate) enum CliCommand {
     /// Register this MCP server in an AI client's configuration.
     InstallMcp(InstallMcpArgs),
+    /// Prepare an Xcode project for Personal Team signing on an iPhone.
+    PrepareIosRunner(PrepareIosRunnerArgs),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -41,11 +43,41 @@ pub(crate) enum DevicePlatform {
     Android,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub(crate) enum IosRunnerTransport {
+    Xcode,
+    Iproxy,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub(crate) enum IosRunnerSigningMode {
+    Automatic,
+    Local,
+}
+
 impl DevicePlatform {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Ios => "ios",
             Self::Android => "android",
+        }
+    }
+}
+
+impl IosRunnerTransport {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Xcode => "xcode",
+            Self::Iproxy => "iproxy",
+        }
+    }
+}
+
+impl IosRunnerSigningMode {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Automatic => "automatic",
+            Self::Local => "local",
         }
     }
 }
@@ -64,6 +96,14 @@ pub(crate) struct InstallMcpArgs {
     #[arg(long, value_enum, default_value = "ios")]
     pub(crate) platform: DevicePlatform,
 
+    /// Physical iOS runner transport to persist in the MCP environment.
+    #[arg(long, value_enum)]
+    pub(crate) ios_runner_transport: Option<IosRunnerTransport>,
+
+    /// Physical iOS runner signing mode to persist in the MCP environment.
+    #[arg(long, value_enum)]
+    pub(crate) ios_runner_signing_mode: Option<IosRunnerSigningMode>,
+
     /// Explicit configuration path instead of the client's default.
     #[arg(long)]
     pub(crate) config_file: Option<PathBuf>,
@@ -77,11 +117,26 @@ pub(crate) struct InstallMcpArgs {
     pub(crate) apply: bool,
 }
 
+#[derive(Debug, Args)]
+pub(crate) struct PrepareIosRunnerArgs {
+    /// Apple Developer Team ID shown for the Personal Team in Xcode.
+    #[arg(long)]
+    pub(crate) team_id: String,
+
+    /// Persistent output directory for the Xcode signing project.
+    #[arg(long)]
+    pub(crate) output_dir: Option<PathBuf>,
+}
+
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use clap::Parser;
 
-    use super::{Cli, CliCommand, Client, DevicePlatform, Scope};
+    use super::{
+        Cli, CliCommand, Client, DevicePlatform, IosRunnerSigningMode, IosRunnerTransport, Scope,
+    };
 
     #[test]
     fn defaults_to_user_scope_and_ios_platform() {
@@ -93,7 +148,9 @@ mod tests {
         ])
         .unwrap();
 
-        let CliCommand::InstallMcp(arguments) = parsed.command;
+        let CliCommand::InstallMcp(arguments) = parsed.command else {
+            panic!("expected install-mcp command");
+        };
         assert_eq!(arguments.scope, Scope::User);
         assert_eq!(arguments.platform, DevicePlatform::Ios);
         assert!(!arguments.apply);
@@ -114,10 +171,63 @@ mod tests {
         ])
         .unwrap();
 
-        let CliCommand::InstallMcp(arguments) = parsed.command;
+        let CliCommand::InstallMcp(arguments) = parsed.command else {
+            panic!("expected install-mcp command");
+        };
         assert_eq!(arguments.client, Client::Codex);
         assert_eq!(arguments.scope, Scope::Project);
         assert_eq!(arguments.platform, DevicePlatform::Android);
+        assert_eq!(arguments.ios_runner_transport, None);
+        assert_eq!(arguments.ios_runner_signing_mode, None);
         assert!(arguments.apply);
+    }
+
+    #[test]
+    fn parses_physical_ios_runner_settings() {
+        let parsed = Cli::try_parse_from([
+            "device-simulator-mcp",
+            "install-mcp",
+            "--client",
+            "opencode",
+            "--ios-runner-transport",
+            "iproxy",
+            "--ios-runner-signing-mode",
+            "local",
+        ])
+        .unwrap();
+
+        let CliCommand::InstallMcp(arguments) = parsed.command else {
+            panic!("expected install-mcp command");
+        };
+        assert_eq!(
+            arguments.ios_runner_transport,
+            Some(IosRunnerTransport::Iproxy)
+        );
+        assert_eq!(
+            arguments.ios_runner_signing_mode,
+            Some(IosRunnerSigningMode::Local)
+        );
+    }
+
+    #[test]
+    fn parses_personal_team_runner_preparation_arguments() {
+        let parsed = Cli::try_parse_from([
+            "device-simulator-mcp",
+            "prepare-ios-runner",
+            "--team-id",
+            "ABCDEFGHIJ",
+            "--output-dir",
+            "./prepared-runner",
+        ])
+        .unwrap();
+
+        let CliCommand::PrepareIosRunner(arguments) = parsed.command else {
+            panic!("expected prepare-ios-runner command");
+        };
+        assert_eq!(arguments.team_id, "ABCDEFGHIJ");
+        assert_eq!(
+            arguments.output_dir,
+            Some(PathBuf::from("./prepared-runner"))
+        );
     }
 }

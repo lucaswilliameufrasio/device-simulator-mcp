@@ -39,7 +39,12 @@ impl Lifecycle {
         }
     }
 
-    pub async fn start(&self, runner: &dyn CommandRunner) -> anyhow::Result<String> {
+    pub async fn start_for(
+        &self,
+        device: &str,
+        runner: &dyn CommandRunner,
+    ) -> anyhow::Result<String> {
+        crate::ios::validate_udid(device)?;
         let mut owned = self.owned.lock().await;
         if let Some(helper) = owned.as_mut() {
             let process = &mut helper.process;
@@ -51,7 +56,7 @@ impl Lifecycle {
             }
             owned.take();
         }
-        let device = target(runner).await?;
+        let device = device.to_owned();
         let (program, arguments) = crate::ios::command(vec!["--list".to_owned(), device.clone()])?;
         let output = runner
             .run_with_timeout(&program, &arguments, ENUMERATION_COMMAND_TIMEOUT)
@@ -120,7 +125,11 @@ impl Lifecycle {
         Ok(format!("MCP-owned serve-sim is ready at {helper}"))
     }
 
-    pub async fn ensure_running(&self, runner: &dyn CommandRunner) -> anyhow::Result<String> {
+    pub async fn ensure_running_for(
+        &self,
+        device: &str,
+        runner: &dyn CommandRunner,
+    ) -> anyhow::Result<String> {
         {
             let mut owned = self.owned.lock().await;
             if let Some(helper) = owned.as_mut() {
@@ -131,7 +140,7 @@ impl Lifecycle {
                 owned.take();
             }
         }
-        self.start(runner).await
+        self.start_for(device, runner).await
     }
 
     pub async fn stop(&self) -> String {
@@ -174,42 +183,6 @@ impl Lifecycle {
             }
         });
     }
-}
-
-async fn target(runner: &dyn CommandRunner) -> anyhow::Result<String> {
-    if let Ok(device) = std::env::var("IOS_SIMULATOR_UDID") {
-        crate::ios::validate_udid(&device)?;
-        return Ok(device);
-    }
-    let output = runner
-        .run(
-            "xcrun",
-            &[
-                "simctl".to_owned(),
-                "list".to_owned(),
-                "devices".to_owned(),
-                "booted".to_owned(),
-                "--json".to_owned(),
-            ],
-        )
-        .await?;
-    anyhow::ensure!(output.success, "could not resolve booted iOS Simulator");
-    let value: serde_json::Value = serde_json::from_slice(&output.stdout)?;
-    let devices = value["devices"]
-        .as_object()
-        .ok_or_else(|| anyhow::anyhow!("invalid Simulator inventory"))?
-        .values()
-        .filter_map(|runtime| runtime.as_array())
-        .flatten()
-        .filter(|device| device["state"] == "Booted")
-        .filter_map(|device| device["udid"].as_str())
-        .collect::<Vec<_>>();
-    anyhow::ensure!(
-        devices.len() == 1,
-        "start requires exactly one booted Simulator; set IOS_SIMULATOR_UDID otherwise"
-    );
-    crate::ios::validate_udid(devices[0])?;
-    Ok(devices[0].to_owned())
 }
 
 #[cfg(test)]

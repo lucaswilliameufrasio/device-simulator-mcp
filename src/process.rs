@@ -72,12 +72,21 @@ pub(crate) struct ManagedProcess {
 
 impl ManagedProcess {
     pub fn spawn(command: &str, arguments: &[String]) -> anyhow::Result<Self> {
+        Self::spawn_with_stdio(command, arguments, Stdio::null(), Stdio::null())
+    }
+
+    pub fn spawn_with_stdio(
+        command: &str,
+        arguments: &[String],
+        stdout: Stdio,
+        stderr: Stdio,
+    ) -> anyhow::Result<Self> {
         let mut builder = Command::new(command);
         builder
             .args(arguments)
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stdout(stdout)
+            .stderr(stderr)
             .kill_on_drop(true);
         #[cfg(unix)]
         builder.process_group(0);

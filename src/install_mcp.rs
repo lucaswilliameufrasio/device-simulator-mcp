@@ -13,11 +13,61 @@ use serde_json::{Map, Value, json};
 use tempfile::NamedTempFile;
 use toml_edit::{Array, DocumentMut, Item, Table, value};
 
-use crate::cli::{Client, DevicePlatform, InstallMcpArgs, Scope};
+use crate::cli::{
+    Client, DevicePlatform, InstallMcpArgs, IosRunnerSigningMode, IosRunnerTransport, Scope,
+};
 
 const SERVER_NAME: &str = "device-simulator";
 
+#[derive(Clone, Copy)]
+struct McpSettings {
+    platform: DevicePlatform,
+    ios_runner_transport: Option<IosRunnerTransport>,
+    ios_runner_signing_mode: Option<IosRunnerSigningMode>,
+}
+
+impl McpSettings {
+    fn from_args(args: &InstallMcpArgs) -> Self {
+        Self {
+            platform: args.platform,
+            ios_runner_transport: args.ios_runner_transport,
+            ios_runner_signing_mode: args.ios_runner_signing_mode,
+        }
+    }
+
+    #[cfg(test)]
+    fn for_platform(platform: DevicePlatform) -> Self {
+        Self {
+            platform,
+            ios_runner_transport: None,
+            ios_runner_signing_mode: None,
+        }
+    }
+
+    fn validate(self) -> Result<()> {
+        if self.platform == DevicePlatform::Android
+            && (self.ios_runner_transport.is_some() || self.ios_runner_signing_mode.is_some())
+        {
+            bail!("iOS runner settings can only be used with --platform ios");
+        }
+        Ok(())
+    }
+
+    fn environment_variables(self) -> Vec<(&'static str, &'static str)> {
+        let mut variables = vec![("DEVICE_PLATFORM", self.platform.as_str())];
+        if let Some(transport) = self.ios_runner_transport {
+            variables.push(("IOS_RUNNER_TRANSPORT", transport.as_str()));
+        }
+        if let Some(signing_mode) = self.ios_runner_signing_mode {
+            variables.push(("IOS_RUNNER_SIGNING_MODE", signing_mode.as_str()));
+        }
+        variables
+    }
+}
+
 pub(crate) fn run(args: InstallMcpArgs) -> Result<()> {
+    let settings = McpSettings::from_args(&args);
+    settings.validate()?;
     let config_path = resolve_config_path(&args)?;
     let binary_path = resolve_binary_path(args.binary.as_deref())?;
 
@@ -30,8 +80,8 @@ pub(crate) fn run(args: InstallMcpArgs) -> Result<()> {
             }
         };
         let updated = match args.client {
-            Client::Codex => update_codex_config(&original, &binary_path, args.platform)?,
-            _ => update_json_config(args.client, &original, &binary_path, args.platform)?,
+            Client::Codex => update_codex_config(&original, &binary_path, settings)?,
+            _ => update_json_config(args.client, &original, &binary_path, settings)?,
         };
         if original == updated {
             println!("Already configured in {}", config_path.display());
@@ -50,10 +100,10 @@ pub(crate) fn run(args: InstallMcpArgs) -> Result<()> {
     );
     println!("Run again with --apply to write this configuration.\n");
     match args.client {
-        Client::Codex => print_codex_preview(&binary_path, args.platform),
-        Client::OpenCode => print_json_preview("mcp", opencode_entry(&binary_path, args.platform))?,
+        Client::Codex => print_codex_preview(&binary_path, settings),
+        Client::OpenCode => print_json_preview("mcp", opencode_entry(&binary_path, settings))?,
         Client::ClaudeCode | Client::Cursor | Client::GeminiCli => {
-            print_json_preview("mcpServers", stdio_entry(&binary_path, args.platform))?
+            print_json_preview("mcpServers", stdio_entry(&binary_path, settings))?
         }
     }
     Ok(())
@@ -124,20 +174,28 @@ fn client_name(client: Client) -> &'static str {
     }
 }
 
-fn stdio_entry(binary: &Path, platform: DevicePlatform) -> Value {
+fn stdio_entry(binary: &Path, settings: McpSettings) -> Value {
     json!({
         "command": binary.to_string_lossy(),
         "args": [],
-        "env": { "DEVICE_PLATFORM": platform.as_str() }
+        "env": environment_object(settings)
     })
 }
 
-fn opencode_entry(binary: &Path, platform: DevicePlatform) -> Value {
+fn opencode_entry(binary: &Path, settings: McpSettings) -> Value {
     json!({
         "type": "local",
         "command": [binary.to_string_lossy()],
-        "environment": { "DEVICE_PLATFORM": platform.as_str() }
+        "environment": environment_object(settings)
     })
+}
+
+fn environment_object(settings: McpSettings) -> Map<String, Value> {
+    let mut environment = Map::new();
+    for (key, setting) in settings.environment_variables() {
+        environment.insert(key.to_owned(), json!(setting));
+    }
+    environment
 }
 
 fn print_json_preview(root_key: &str, entry: Value) -> Result<()> {
@@ -149,9 +207,9 @@ fn print_json_preview(root_key: &str, entry: Value) -> Result<()> {
     Ok(())
 }
 
-fn print_codex_preview(binary: &Path, platform: DevicePlatform) {
+fn print_codex_preview(binary: &Path, settings: McpSettings) {
     let mut document = DocumentMut::new();
-    upsert_codex_entry(&mut document, binary, platform)
+    upsert_codex_entry(&mut document, binary, settings)
         .expect("building MCP config for Codex should not fail");
     print!("{document}");
 }
@@ -160,8 +218,9 @@ fn update_json_config(
     client: Client,
     original: &str,
     binary: &Path,
-    platform: DevicePlatform,
+    settings: McpSettings,
 ) -> Result<String> {
+    settings.validate()?;
     let input = if original.trim().is_empty() {
         "{}"
     } else {
@@ -195,11 +254,9 @@ fn update_json_config(
         let environment = server
             .object_value_or_create("environment")
             .context("`environment` must be a JSON object")?;
-        set_cst_value(
-            &environment,
-            "DEVICE_PLATFORM",
-            CstInputValue::String(platform.as_str().to_owned()),
-        );
+        for (key, setting) in settings.environment_variables() {
+            set_cst_value(&environment, key, CstInputValue::String(setting.to_owned()));
+        }
     } else {
         set_cst_value(
             &server,
@@ -210,11 +267,9 @@ fn update_json_config(
         let environment = server
             .object_value_or_create("env")
             .context("`env` must be a JSON object")?;
-        set_cst_value(
-            &environment,
-            "DEVICE_PLATFORM",
-            CstInputValue::String(platform.as_str().to_owned()),
-        );
+        for (key, setting) in settings.environment_variables() {
+            set_cst_value(&environment, key, CstInputValue::String(setting.to_owned()));
+        }
     }
     Ok(root.to_string())
 }
@@ -227,7 +282,8 @@ fn set_cst_value(object: &CstObject, key: &str, value: CstInputValue) {
     }
 }
 
-fn update_codex_config(original: &str, binary: &Path, platform: DevicePlatform) -> Result<String> {
+fn update_codex_config(original: &str, binary: &Path, settings: McpSettings) -> Result<String> {
+    settings.validate()?;
     let mut document: DocumentMut = if original.trim().is_empty() {
         DocumentMut::new()
     } else {
@@ -235,14 +291,14 @@ fn update_codex_config(original: &str, binary: &Path, platform: DevicePlatform) 
             .parse()
             .context("parsing the existing Codex configuration as TOML")?
     };
-    upsert_codex_entry(&mut document, binary, platform)?;
+    upsert_codex_entry(&mut document, binary, settings)?;
     Ok(document.to_string())
 }
 
 fn upsert_codex_entry(
     document: &mut DocumentMut,
     binary: &Path,
-    platform: DevicePlatform,
+    settings: McpSettings,
 ) -> Result<()> {
     let mcp_servers = document
         .entry("mcp_servers")
@@ -263,7 +319,9 @@ fn upsert_codex_entry(
         .or_insert(Item::Table(Table::new()))
         .as_table_mut()
         .context("`env` must be a TOML table")?;
-    environment.insert("DEVICE_PLATFORM", value(platform.as_str()));
+    for (key, setting) in settings.environment_variables() {
+        environment.insert(key, value(setting));
+    }
     Ok(())
 }
 
@@ -315,7 +373,7 @@ mod tests {
             Client::Cursor,
             existing,
             Path::new("/opt/device-simulator-mcp"),
-            DevicePlatform::Ios,
+            McpSettings::for_platform(DevicePlatform::Ios),
         )
         .unwrap();
 
@@ -332,14 +390,14 @@ mod tests {
             Client::ClaudeCode,
             "{}",
             Path::new("/opt/device-simulator-mcp"),
-            DevicePlatform::Ios,
+            McpSettings::for_platform(DevicePlatform::Ios),
         )
         .unwrap();
         let gemini = update_json_config(
             Client::GeminiCli,
             "{}",
             Path::new("/opt/device-simulator-mcp"),
-            DevicePlatform::Ios,
+            McpSettings::for_platform(DevicePlatform::Ios),
         )
         .unwrap();
 
@@ -353,9 +411,9 @@ mod tests {
     fn replacing_existing_entry_is_idempotent() {
         let original = update_json_config(
             Client::OpenCode,
-            r#"{"mcp":{"device-simulator":{"enabled":false,"environment":{"ANDROID_SERIAL":"emulator-1"}}}}"#,
+            r#"{"mcp":{"device-simulator":{"enabled":false,"environment":{"ANDROID_SERIAL":"emulator-1","IOS_RUNNER_TRANSPORT":"iproxy","IOS_RUNNER_SIGNING_MODE":"local"}}}}"#,
             Path::new("/opt/device-simulator-mcp"),
-            DevicePlatform::Android,
+            McpSettings::for_platform(DevicePlatform::Android),
         )
         .unwrap();
 
@@ -363,23 +421,64 @@ mod tests {
             Client::OpenCode,
             &original,
             Path::new("/opt/device-simulator-mcp"),
-            DevicePlatform::Android,
+            McpSettings::for_platform(DevicePlatform::Android),
         )
         .unwrap();
 
         assert_eq!(original, updated);
         assert!(updated.contains("\"enabled\":false"));
         assert!(updated.contains("\"ANDROID_SERIAL\":\"emulator-1\""));
+        assert!(updated.contains("\"IOS_RUNNER_TRANSPORT\":\"iproxy\""));
+        assert!(updated.contains("\"IOS_RUNNER_SIGNING_MODE\":\"local\""));
+    }
+
+    #[test]
+    fn writes_requested_runner_settings_to_json_client_formats() {
+        let settings = McpSettings {
+            platform: DevicePlatform::Ios,
+            ios_runner_transport: Some(IosRunnerTransport::Iproxy),
+            ios_runner_signing_mode: Some(IosRunnerSigningMode::Local),
+        };
+
+        for client in [
+            Client::ClaudeCode,
+            Client::Cursor,
+            Client::GeminiCli,
+            Client::OpenCode,
+        ] {
+            let updated = update_json_config(
+                client,
+                "{}",
+                Path::new("/opt/device-simulator-mcp"),
+                settings,
+            )
+            .unwrap();
+            let config: serde_json::Value = serde_json::from_str(&updated).unwrap();
+            let server = if client == Client::OpenCode {
+                &config["mcp"][SERVER_NAME]
+            } else {
+                &config["mcpServers"][SERVER_NAME]
+            };
+            let environment_key = if client == Client::OpenCode {
+                "environment"
+            } else {
+                "env"
+            };
+
+            assert_eq!(server[environment_key]["DEVICE_PLATFORM"], "ios");
+            assert_eq!(server[environment_key]["IOS_RUNNER_TRANSPORT"], "iproxy");
+            assert_eq!(server[environment_key]["IOS_RUNNER_SIGNING_MODE"], "local");
+        }
     }
 
     #[test]
     fn merges_codex_server_without_removing_other_tables() {
-        let original = "model = \"gpt\"\n\n[mcp_servers.other]\ncommand = \"other\"\n\n[mcp_servers.device-simulator.env]\nANDROID_SERIAL = \"emulator-1\"\n";
+        let original = "model = \"gpt\"\n\n[mcp_servers.other]\ncommand = \"other\"\n\n[mcp_servers.device-simulator.env]\nANDROID_SERIAL = \"emulator-1\"\nIOS_RUNNER_TRANSPORT = \"iproxy\"\nIOS_RUNNER_SIGNING_MODE = \"local\"\n";
 
         let updated = update_codex_config(
             original,
             Path::new("/opt/device-simulator-mcp"),
-            DevicePlatform::Android,
+            McpSettings::for_platform(DevicePlatform::Android),
         )
         .unwrap();
 
@@ -388,6 +487,39 @@ mod tests {
         assert!(updated.contains("[mcp_servers.device-simulator]"));
         assert!(updated.contains("DEVICE_PLATFORM = \"android\""));
         assert!(updated.contains("ANDROID_SERIAL = \"emulator-1\""));
+        assert!(updated.contains("IOS_RUNNER_TRANSPORT = \"iproxy\""));
+        assert!(updated.contains("IOS_RUNNER_SIGNING_MODE = \"local\""));
+    }
+
+    #[test]
+    fn writes_requested_runner_settings_to_codex_environment() {
+        let settings = McpSettings {
+            platform: DevicePlatform::Ios,
+            ios_runner_transport: Some(IosRunnerTransport::Xcode),
+            ios_runner_signing_mode: Some(IosRunnerSigningMode::Automatic),
+        };
+        let updated =
+            update_codex_config("", Path::new("/opt/device-simulator-mcp"), settings).unwrap();
+        let config = updated.parse::<DocumentMut>().unwrap();
+        let environment = &config["mcp_servers"][SERVER_NAME]["env"];
+
+        assert_eq!(environment["DEVICE_PLATFORM"].as_str(), Some("ios"));
+        assert_eq!(environment["IOS_RUNNER_TRANSPORT"].as_str(), Some("xcode"));
+        assert_eq!(
+            environment["IOS_RUNNER_SIGNING_MODE"].as_str(),
+            Some("automatic")
+        );
+    }
+
+    #[test]
+    fn rejects_ios_runner_settings_for_android() {
+        let settings = McpSettings {
+            platform: DevicePlatform::Android,
+            ios_runner_transport: Some(IosRunnerTransport::Iproxy),
+            ios_runner_signing_mode: None,
+        };
+
+        assert!(settings.validate().is_err());
     }
 
     #[test]
@@ -400,7 +532,7 @@ mod tests {
             Client::GeminiCli,
             &original,
             Path::new("/opt/device-simulator-mcp"),
-            DevicePlatform::Ios,
+            McpSettings::for_platform(DevicePlatform::Ios),
         );
 
         assert!(updated.is_err());
@@ -413,6 +545,8 @@ mod tests {
             client: Client::Cursor,
             scope: Scope::Project,
             platform: DevicePlatform::Ios,
+            ios_runner_transport: None,
+            ios_runner_signing_mode: None,
             config_file: Some(PathBuf::from("custom/mcp.json")),
             binary: None,
             apply: false,
@@ -440,6 +574,8 @@ mod tests {
             client: Client::Cursor,
             scope: Scope::User,
             platform: DevicePlatform::Android,
+            ios_runner_transport: None,
+            ios_runner_signing_mode: None,
             config_file: Some(config_path.clone()),
             binary: Some(binary_path.clone()),
             apply: true,
@@ -450,6 +586,8 @@ mod tests {
             client: Client::Cursor,
             scope: Scope::User,
             platform: DevicePlatform::Android,
+            ios_runner_transport: None,
+            ios_runner_signing_mode: None,
             config_file: Some(config_path.clone()),
             binary: Some(binary_path),
             apply: true,

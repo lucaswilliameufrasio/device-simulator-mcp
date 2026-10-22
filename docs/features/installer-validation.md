@@ -36,6 +36,17 @@ This verifies native CLI startup after provisioning, not complete offline device
 backend operation. Linux/macOS CI jobs have been configured but not yet run for
 this local follow-up.
 
+## Optional iOS runner settings
+
+`install-mcp` can persist `IOS_RUNNER_TRANSPORT` and
+`IOS_RUNNER_SIGNING_MODE` through the typed `--ios-runner-transport` and
+`--ios-runner-signing-mode` flags for each supported client. These options are
+omitted unless explicitly supplied, preserve existing values when omitted, and
+are rejected with `--platform android`. They do not configure a device UDID or
+team ID; physical-device routing remains an explicit `device_select` action.
+Integration coverage exercises these settings across all supported client
+configuration formats and confirms repeated installation is idempotent.
+
 ## Remaining acceptance work
 
 Current-build Linux target execution, clean online provisioning, persistent

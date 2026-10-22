@@ -1,0 +1,139 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A10000000000000000000001 /* DeviceRunnerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* DeviceRunnerApp.swift */; };
+		A10000000000000000000002 /* DeviceRunnerUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* DeviceRunnerUITests.swift */; };
+		A10000000000000000000003 /* DeviceRunnerCommandServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000003 /* DeviceRunnerCommandServer.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		A30000000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A40000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A50000000000000000000001;
+			remoteInfo = DeviceRunner;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		A20000000000000000000001 /* DeviceRunnerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceRunnerApp.swift; sourceTree = "<group>"; };
+		A20000000000000000000002 /* DeviceRunnerUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceRunnerUITests.swift; sourceTree = "<group>"; };
+		A20000000000000000000003 /* DeviceRunnerCommandServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceRunnerCommandServer.swift; sourceTree = "<group>"; };
+		A20000000000000000000004 /* DeviceRunner.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DeviceRunner.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A20000000000000000000005 /* DeviceRunnerUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DeviceRunnerUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A60000000000000000000001 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		A60000000000000000000002 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A70000000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				A70000000000000000000002 /* DeviceRunner */,
+				A70000000000000000000003 /* DeviceRunnerUITests */,
+				A70000000000000000000004 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A70000000000000000000002 /* DeviceRunner */ = {
+			isa = PBXGroup;
+			children = (A20000000000000000000001 /* DeviceRunnerApp.swift */,);
+			path = DeviceRunner;
+			sourceTree = "<group>";
+		};
+		A70000000000000000000003 /* DeviceRunnerUITests */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000002 /* DeviceRunnerUITests.swift */,
+				A20000000000000000000003 /* DeviceRunnerCommandServer.swift */,
+			);
+			path = DeviceRunnerUITests;
+			sourceTree = "<group>";
+		};
+		A70000000000000000000004 /* Products */ = {isa = PBXGroup; children = (A20000000000000000000004 /* DeviceRunner.app */, A20000000000000000000005 /* DeviceRunnerUITests.xctest */,); name = Products; sourceTree = "<group>"; };
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A50000000000000000000001 /* DeviceRunner */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A80000000000000000000001 /* Build configuration list for PBXNativeTarget "DeviceRunner" */;
+			buildPhases = (A60000000000000000000003 /* Sources */, A60000000000000000000001 /* Frameworks */, A90000000000000000000001 /* Resources */,);
+			buildRules = ();
+			dependencies = ();
+			name = DeviceRunner;
+			productName = DeviceRunner;
+			productReference = A20000000000000000000004 /* DeviceRunner.app */;
+			productType = "com.apple.product-type.application";
+		};
+		A50000000000000000000002 /* DeviceRunnerUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A80000000000000000000002 /* Build configuration list for PBXNativeTarget "DeviceRunnerUITests" */;
+			buildPhases = (A60000000000000000000004 /* Sources */, A60000000000000000000002 /* Frameworks */, A90000000000000000000002 /* Resources */,);
+			buildRules = ();
+			dependencies = (AA000000000000000000001 /* PBXTargetDependency */,);
+			name = DeviceRunnerUITests;
+			productName = DeviceRunnerUITests;
+			productReference = A20000000000000000000005 /* DeviceRunnerUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A60000000000000000000003 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000001 /* DeviceRunnerApp.swift in Sources */,); runOnlyForDeploymentPostprocessing = 0; };
+		A60000000000000000000004 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000002 /* DeviceRunnerUITests.swift in Sources */, A10000000000000000000003 /* DeviceRunnerCommandServer.swift in Sources */,); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		AA000000000000000000001 /* PBXTargetDependency */ = {isa = PBXTargetDependency; target = A50000000000000000000001 /* DeviceRunner */; targetProxy = A30000000000000000000001 /* PBXContainerItemProxy */; };
+/* End PBXTargetDependency section */
+
+/* Begin PBXProject section */
+		A40000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {BuildIndependentTargetsInParallel = 1; LastUpgradeCheck = 2700; TargetAttributes = {A50000000000000000000001 = {CreatedOnToolsVersion = 27.0; }; A50000000000000000000002 = {CreatedOnToolsVersion = 27.0; TestTargetID = A50000000000000000000001; }; }; };
+			buildConfigurationList = A80000000000000000000003 /* Build configuration list for PBXProject "DeviceRunner" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (en, Base,);
+			mainGroup = A70000000000000000000001;
+			productRefGroup = A70000000000000000000004 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (A50000000000000000000001 /* DeviceRunner */, A50000000000000000000002 /* DeviceRunnerUITests */,);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A90000000000000000000001 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		A90000000000000000000002 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXResourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		AB000000000000000000001 /* Debug Project */ = {isa = XCBuildConfiguration; buildSettings = {IPHONEOS_DEPLOYMENT_TARGET = 16.0; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; }; name = Debug; };
+		AB000000000000000000002 /* Release Project */ = {isa = XCBuildConfiguration; buildSettings = {IPHONEOS_DEPLOYMENT_TARGET = 16.0; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; }; name = Release; };
+		AB000000000000000000003 /* Debug DeviceRunner */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = TEAM_ID_HERE; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 16.0; PRODUCT_BUNDLE_IDENTIFIER = org.devicesimulatormcp.runner.template; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1"; }; name = Debug; };
+		AB000000000000000000004 /* Release DeviceRunner */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = TEAM_ID_HERE; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 16.0; PRODUCT_BUNDLE_IDENTIFIER = org.devicesimulatormcp.runner.template; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1"; }; name = Release; };
+		AB000000000000000000005 /* Debug DeviceRunnerUITests */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = TEAM_ID_HERE; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 16.0; PRODUCT_BUNDLE_IDENTIFIER = org.devicesimulatormcp.tests.template; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1"; TEST_TARGET_NAME = DeviceRunner; }; name = Debug; };
+		AB000000000000000000006 /* Release DeviceRunnerUITests */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = TEAM_ID_HERE; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 16.0; PRODUCT_BUNDLE_IDENTIFIER = org.devicesimulatormcp.tests.template; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1"; TEST_TARGET_NAME = DeviceRunner; }; name = Release; };
+		AB000000000000000000007 /* Debug Project Config */ = {isa = XCBuildConfiguration; buildSettings = {}; name = Debug; };
+		AB000000000000000000008 /* Release Project Config */ = {isa = XCBuildConfiguration; buildSettings = {}; name = Release; };
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A80000000000000000000001 /* Build configuration list for PBXNativeTarget "DeviceRunner" */ = {isa = XCConfigurationList; buildConfigurations = (AB000000000000000000003 /* Debug DeviceRunner */, AB000000000000000000004 /* Release DeviceRunner */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		A80000000000000000000002 /* Build configuration list for PBXNativeTarget "DeviceRunnerUITests" */ = {isa = XCConfigurationList; buildConfigurations = (AB000000000000000000005 /* Debug DeviceRunnerUITests */, AB000000000000000000006 /* Release DeviceRunnerUITests */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		A80000000000000000000003 /* Build configuration list for PBXProject "DeviceRunner" */ = {isa = XCConfigurationList; buildConfigurations = (AB000000000000000000001 /* Debug Project */, AB000000000000000000002 /* Release Project */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+/* End XCConfigurationList section */
+	};
+	rootObject = A40000000000000000000001 /* Project object */;
+}

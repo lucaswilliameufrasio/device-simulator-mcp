@@ -2,11 +2,13 @@ mod accessibility;
 mod android_accessibility;
 mod android_grpc;
 mod cli;
+mod device;
 mod frame_cache;
 mod install_mcp;
 mod ios;
 mod ios_device;
 mod ios_lifecycle;
+mod ios_runner;
 mod mcp;
 mod observation;
 mod platform;
@@ -24,6 +26,9 @@ async fn main() -> anyhow::Result<()> {
         let cli = cli::Cli::parse();
         match cli.command {
             cli::CliCommand::InstallMcp(arguments) => install_mcp::run(arguments)?,
+            cli::CliCommand::PrepareIosRunner(arguments) => {
+                ios_runner::prepare::run(arguments)?;
+            }
         }
         return Ok(());
     }

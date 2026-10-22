@@ -1,15 +1,16 @@
 # Device Simulator MCP
 
-Local MCP server for inspecting and controlling booted iOS Simulators and
-Android Emulators. It is framework-agnostic: the app can be Flutter, SwiftUI,
-UIKit, React Native, or any other app that runs on the target device.
+Local MCP server for inspecting and controlling iOS Simulators, physical
+iPhones, and Android devices. It is framework-agnostic: the app can be Flutter,
+SwiftUI, UIKit, React Native, or any other app that runs on the target device.
 
 ## Requirements
 
 - Rust 1.98 or newer to build from source.
-- iOS: macOS, Xcode Command Line Tools, a booted Simulator, Node.js 24.21.0
-  or newer, and `npx` for `serve-sim` interactions.
-- Android: Android SDK platform tools, `adb`, and a booted Emulator.
+- iOS: macOS and Xcode Command Line Tools. Simulator `serve-sim` interactions
+  also require Node.js 24.22.1 or newer and `npx`.
+- Android: Android SDK platform tools and `adb`; connect a device or start an
+  Emulator.
 
 ## Installation
 
@@ -55,6 +56,10 @@ device-simulator-mcp install-mcp --client opencode --apply
 # Use Android instead of the default iOS platform.
 device-simulator-mcp install-mcp --client codex --platform android --apply
 
+# Persist runner transport and local signing settings without selecting a device.
+device-simulator-mcp install-mcp --client opencode \
+  --ios-runner-transport iproxy --ios-runner-signing-mode local --apply
+
 # Run from the project root to add the server only to that project.
 device-simulator-mcp install-mcp --client cursor --scope project --apply
 ```
@@ -64,6 +69,12 @@ Use `--config-file PATH` to target a non-default configuration file or
 path. JSON/JSONC comments and Codex TOML comments are preserved. Restart the AI
 client after applying the configuration. This command registers the stdio MCP
 server; it does not install lifecycle hooks.
+The optional `--ios-runner-transport` (`xcode` or `iproxy`) and
+`--ios-runner-signing-mode` (`automatic` or `local`) flags configure the matching
+MCP environment variables. They are iOS-only; when omitted, existing values are
+preserved. Local signing still requires `IOS_DEVICE_TEAM_ID` to be configured
+separately. The installer does not persist a device UDID or team ID: select a
+physical iPhone explicitly with `device_select`.
 
 ## MCP Configuration
 
@@ -82,10 +93,35 @@ The server uses stdio. Set `DEVICE_PLATFORM` to `ios` or `android`.
 }
 ```
 
-Set `ANDROID_SERIAL` when more than one Android device is available.
+### Device discovery and selection
+
+Use `device_list` to discover iOS Simulators, connected physical iPhones, and
+ADB Android devices. The server never picks the first available or booted device.
+Select a default for this MCP instance with `device_select`:
+
+```json
+{ "device_id": "ios-simulator:11111111-1111-4111-8111-111111111111" }
+```
+
+Stable IDs are prefixed by target type: `ios-simulator:<UDID>`,
+`ios-device:<UDID>`, `android:<serial>`, and `android-grpc:<endpoint>`. Device
+operation tools also accept an optional `device_id` to override the instance
+default for that call. `device_step` resolves one target for its entire sequence;
+its nested `capture` uses that same target and cannot override it. Omitting a
+call override and instance default uses the explicit legacy environment target
+when configured; otherwise the operation asks for a selection. Existing
+single-device configurations remain supported: iOS requires
+`IOS_SIMULATOR_UDID` (or `DEVICE_IOS_TARGET=device` with `IOS_DEVICE_UDID`), and
+ADB requires `ANDROID_SERIAL`; Android gRPC requires its explicit endpoint and
+token-file configuration. Call `device_select` without `device_id` to clear the
+instance default. The server does not change environment variables when
+selecting a target.
 
 ## Tools
 
+- `device_list`: list discoverable targets, their availability, and the current
+  selection source.
+- `device_select`: set or clear the default target for this MCP instance.
 - `device_start`: start inspection for the selected platform.
 - `device_stop`: stop an iOS helper started by this MCP, or disconnect the
   persistent input socket. Externally started streams are never stopped.
@@ -178,49 +214,114 @@ retried. A backend submission is not acknowledgement of application rendering.
 - The existing capture parameters/default PNG bytes remain compatible.
 - Optional capture `max_age_ms` permits reuse of one locally acquired raw frame
   (1–5000 ms); default 0 always reacquires. Cache reuse requires an explicit
-  device target (`IOS_SIMULATOR_UDID`, `ANDROID_SERIAL`, or configured gRPC
-  endpoint). Metadata reports `cache_hit`, `local_age_ms`, and the original
+  target from a `device_id` override, instance selection, or legacy environment
+  configuration. Cache entries are isolated by device and backend. Metadata
+  reports `cache_hit`, `local_age_ms`, and the original
   receive timestamp. Local age is **not source age** for serve-sim replay.
   Mutations, repair, start and stop invalidate the cache even if they fail.
   No background capture is started. Visual waits reject final captures requesting
   cache reuse or `latest_frame`; independent captures remain compatible.
 - Per server, operations share ordering and a bounded queue of eight calls.
-  Normal calls have a 20-second total deadline; startup allows 25 seconds.
-  Each subprocess has a 20-second deadline and a 24 MiB output limit per pipe.
+  Normal calls have a 20-second total deadline; persistent helper startup allows
+  25 seconds and physical XCTest runner startup allows up to five minutes.
+  Xcode-only standalone input/inspection also allows five minutes per call.
+  Short-lived command processes have a 20-second deadline and a 24 MiB output
+  limit per pipe.
 - Cancellation terminates subprocesses; Unix additionally terminates their
   process groups. Persistent gestures attempt bounded release of held contacts
   or keys on cancellation. Results can still be uncertain: never blindly retry.
 
 ### Physical iOS device backend (opt-in)
 
-Physical iPhones are selected explicitly; the default remains the Simulator.
-`devicectl` provides device readiness, screenshots and orientation. Touch, swipe,
-typing and accessibility inspection require a separately provisioned,
-signed WebDriverAgent service listening on loopback.
+Physical iPhones are discovered but never selected automatically; choose one
+with `device_select` or a per-call `device_id`. The default remains unselected
+unless a target is configured. `devicectl` provides device readiness, screenshots
+and orientation. Without `IOS_WDA_URL`, `device_start` builds, signs, installs,
+and runs this project's XCTest UI runner. `IOS_RUNNER_TRANSPORT` selects:
+
+- `xcode` (default): only Xcode, no `iproxy` installation or device TCP listener.
+  One XCTest stays open, exchanging bounded JSON files through `devicectl`
+  app-container transfers. This is slower than a socket; use standalone
+  `device_tap`, `device_swipe`, `device_type`, and
+  `device_inspect`. Input/AX `device_step` requests are rejected before input
+  because they cannot meet the 20-second step deadline. Capture-only steps work.
+- `iproxy`: a persistent XCTest session over USB. The runner and local forwarder
+  listen only on loopback, never Wi-Fi. Supports input/AX steps.
 
 ```json
 {
   "DEVICE_PLATFORM": "ios",
   "DEVICE_IOS_TARGET": "device",
   "IOS_DEVICE_UDID": "<connected iPhone UDID>",
-  "IOS_WDA_URL": "http://127.0.0.1:8100"
+  "IOS_DEVICE_TEAM_ID": "<10-character Apple Developer Team ID>"
 }
 ```
 
-`IOS_WDA_URL` is optional. Without it, capture and orientation remain available;
-input and accessibility operations report that WDA is required. `device_start`
-requests device details through Xcode's `devicectl`; the iPhone must be paired,
-trusted and reachable for device operations. `device_stop` does not
-stop the iPhone or an externally managed WDA process. `device_capabilities`
-reports which operations are configured. The MCP does not install, sign, or
-launch apps or WebDriverAgent on the device.
+For the optional persistent transport:
+
+```bash
+brew install libusbmuxd
+iproxy --version
+```
+
+Set `IOS_RUNNER_TRANSPORT=iproxy` in the MCP environment to select it.
+`IOS_IPROXY_BINARY` can specify a non-default executable path. No automatic
+fallback/retry occurs after an input failure. Both transports need Xcode.
+The first `device_start`
+requires a paired, unlocked iPhone with Developer Mode enabled and approval of
+the signing certificate on the phone. For an enrolled Apple Developer Program
+team, Xcode automatic signing uses the supplied Team ID. If profiles do not
+already exist, explicitly set `IOS_RUNNER_ALLOW_PROVISIONING_UPDATES=true` to
+permit Xcode to contact Apple, create/update provisioning profiles, and register
+the selected device with the team. This is disabled by default; no
+certificate/private key is exported.
+
+For an Apple Personal Team, use Xcode-managed local profiles instead of
+Developer Portal provisioning:
+
+```bash
+device-simulator-mcp prepare-ios-runner --team-id YOUR_TEAM_ID
+```
+
+Open the printed project in Xcode, select the connected iPhone as the
+destination, and choose **Product > Build For > Testing**. Do not choose
+**Product > Test**: the XCTest server intentionally remains running during its
+test. Set `IOS_RUNNER_SIGNING_MODE=local` in the MCP environment and restart the
+MCP. Before startup, the runner validates unexpired local profiles matching the
+team, selected device, app bundle ID, and XCTest runner bundle ID. Xcode then
+uses automatic signing with those existing Xcode-managed profiles; the MCP does
+not pass provisioning-update or device-registration flags. If the profiles are
+missing or invalid, startup fails instead of requesting their creation. The
+prepared project is kept under the user's Application Support directory and is
+not overwritten by a later prepare command. Personal Team profiles expire after
+seven days, so repeat the Xcode build-for-testing step when profiles expire.
+Apple documents Personal Team limits of 10 App IDs and 3 devices.
+
+`device_start` accepts an optional `app_bundle_id` when using the
+XCTest runner; without it, the runner starts against SpringBoard. Starting the
+runner installs its test app on the phone. `device_stop` stops only MCP-owned
+XCTest and USB-forwarding processes; it does not power off the phone or stop
+other apps. A configured
+`IOS_WDA_URL` continues to select the existing externally managed WebDriverAgent
+path instead. `device_capabilities` reports configured support, not whether the
+runner has been built or the phone is ready.
+
+The Xcode-only runner is validated on an isolated iOS Simulator for launch,
+tap, typing with focus preserved, accessibility readback, swipe, and stop. The
+Simulator test accesses its local container rather than running physical-device
+file transfers. The physical iPhone runner has also been validated with an
+Xcode-managed Personal Team profile, including startup, USB forwarding, visual
+verification, tap/text input, accessibility readback, and stop; see
+[`docs/features/physical-ios-device.md`](docs/features/physical-ios-device.md).
+Physical use still requires a paired device and an active development profile.
 
 ### Persistent iOS backend (opt-in)
 
 The default `cli` backend retains CLI interactions, using pinned
 `serve-sim@0.1.47`. `device_start` reuses a running helper or starts an owned
 foreground helper that is stopped on explicit stop or graceful MCP shutdown.
-It requires an explicit `IOS_SIMULATOR_UDID` or exactly one booted Simulator.
+It uses the resolved Simulator target; without a selection, the legacy
+configuration requires an explicit `IOS_SIMULATOR_UDID`.
 It does not kill or take ownership of an existing external stream.
 Set `SERVE_SIM_BINARY` to a preinstalled, compatible `serve-sim` executable to
 bypass npm resolution entirely, including in the CLI fallback and helper startup.
@@ -351,7 +452,7 @@ Android Emulator or connect a device. Set `ANDROID_SERIAL` when more than one
 device is available.
 
 If an iOS tool reports that `npx` or `xcrun` was not found, install Node.js
-24.21.0 or newer and Xcode Command Line Tools. Run
+24.22.1 or newer and Xcode Command Line Tools. Run
 `xcode-select --install`, ensure `npx` is on `PATH`, and boot an iOS
 Simulator.
 
