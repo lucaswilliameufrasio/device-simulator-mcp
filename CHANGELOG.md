@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0] - 2026-10-22
+
+### Bug Fixes
+
+- Tolerate denied process-group cleanup
+
+
+### Features
+
+- Add multi-device and native iPhone control
+
 ## [0.2.0] - 2026-10-10
 
 ### Features
