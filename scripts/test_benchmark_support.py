@@ -34,6 +34,12 @@ class BenchmarkSupportTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "deadline"):
             support.run_bounded([sys.executable, "-c", "import time; time.sleep(30)"], 0.05)
 
+    def test_process_group_cleanup_permission_error_does_not_mask_output_error(self):
+        with mock.patch.object(support, "MAX_BYTES", 8):
+            with mock.patch.object(support.os, "killpg", side_effect=PermissionError):
+                with self.assertRaisesRegex(RuntimeError, "byte limit"):
+                    support.run_bounded([sys.executable, "-c", "print('123456789')"], 3)
+
     def test_direct_ios_capture_uses_unique_paths_and_cleans_them(self):
         paths = []
 

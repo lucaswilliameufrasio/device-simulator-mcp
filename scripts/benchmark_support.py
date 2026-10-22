@@ -56,6 +56,12 @@ def run_bounded(arguments, timeout):
                 os.killpg(child.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
+            except PermissionError:
+                if child.poll() is None:
+                    try:
+                        child.kill()
+                    except ProcessLookupError:
+                        pass
         elif child.poll() is None:
             child.kill()
         child.wait()
